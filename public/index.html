@@ -276,13 +276,18 @@
         <button class="btn-big" id="btnStart">开始导出</button>
       </div>
       <div class="plan-row" id="planLocalRow">
-        <span class="plan-k">电脑目录</span>
+        <span class="plan-k" id="planDirLabel">电脑目录</span>
         <span class="muted" id="planDir" style="flex:1;word-break:break-all">-</span>
-        <button class="ghost" id="btnPlanDir">更换目录</button>
+        <button class="ghost" id="btnPlanDir">浏览目录</button>
+      </div>
+      <div class="plan-row" id="fsaRow" style="display:none">
+        <span class="plan-k">本机写入</span>
+        <button class="ghost" id="btnFsa">选本机文件夹，直接写入…</button>
+        <span class="muted" id="fsaName">未选择（浏览器不支持时不可用）</span>
       </div>
       <div class="plan-row" id="planPhoneRow" style="display:none">
-        <span class="plan-k">手机相册</span>
-        <span class="hint" id="planPhoneHint">下载完由本机浏览器逐个拉回手机；用 App 打开的直接进相册，用浏览器打开的落在下载目录。</span>
+        <span class="plan-k">下载到本机</span>
+        <span class="hint" id="planPhoneHint">服务器负责抓取和打包，完成后由本机浏览器把文件拉回你这台电脑。想每次自己选保存位置，就在浏览器设置里打开「下载前询问每个文件的保存位置」，会弹出系统另存为窗口。</span>
       </div>
       <div class="plan-row" id="planQuarkRow" style="display:none">
         <span class="plan-k">网盘路径</span>
@@ -798,7 +803,10 @@ async function startExport(ids) {
       if (v) v.downloaded = true;
     });
     renderList();
-    if (target === 'phone') {
+    if (dirHandle && produced.length) {
+      const wrote = await writeToDirHandle(produced);
+      $('msg').innerHTML = `<span class="ok">已写入本机文件夹「${dirHandle.name}」共 ${wrote} 个文件</span>`;
+    } else if (target === 'phone') {
       if (!produced.length) $('msg').innerHTML = '<span class="err">这一批没有产出文件，手机无东西可拉</span>';
       else {
         $('msg').innerHTML = `<span class="ok">下载完成 ${produced.length} 个文件，开始存到手机…</span>`;
@@ -880,7 +888,7 @@ async function loadConfig() {
     $('useCookies').checked = c.useCookies !== false;
     $('quality').value = c.quality || 'best';
     updateSafeInfo();
-    updatePlan();
+    setTarget(state.target || 'local');
     if (c.isLocal && c.lan && c.lan.length) {
       const url = `http://${c.lan[0]}:${c.port}/?token=${c.token}`;
       $('lanAddr').textContent = url;
@@ -1361,14 +1369,24 @@ function quarkReady() {
 }
 function setTarget(t) {
   state.target = t;
-  [...$('targetSeg').children].forEach((b) => b.classList.toggle('on', b.dataset.t === t));
+  const local = !(state.config && state.config.isLocal === false);
+  const labels = local
+    ? { local: '电脑', phone: '手机相册', quark: '夸克网盘' }
+    : { local: '服务器目录', phone: '下载到本机', quark: '夸克网盘' };
+  [...$('targetSeg').children].forEach((b) => {
+    b.classList.toggle('on', b.dataset.t === t);
+    b.textContent = labels[b.dataset.t];
+  });
+  $('planDirLabel').textContent = local ? '电脑目录' : '服务器目录';
   $('planLocalRow').style.display = t === 'local' ? '' : 'none';
+  $('fsaRow').style.display = (t === 'local' && window.showDirectoryPicker) ? '' : 'none';
   $('planPhoneRow').style.display = t === 'phone' ? '' : 'none';
   $('planQuarkRow').style.display = t === 'quark' ? '' : 'none';
-  const txt = t === 'phone'
-    ? '勾选作品 → 选类型 → 点开始导出：文件先落在服务器/电脑，再由本机浏览器逐个拉回手机'
-    : (t === 'quark' ? '勾选作品 → 选类型 → 点开始导出：下完自动打包并上传到夸克网盘指定目录' : '勾选作品 → 选类型 → 点开始导出：按 图片 / 动态图 / 视频 三个子文件夹保存');
-  $('subLine').textContent = txt;
+  $('subLine').textContent = t === 'phone'
+    ? '勾选作品 → 选类型 → 点开始导出：服务器抓取打包后，由本机浏览器拉回你这台电脑'
+    : (t === 'quark' ? '勾选作品 → 选类型 → 点开始导出：下完自动打包并上传到夸克网盘指定目录'
+      : (local ? '勾选作品 → 选类型 → 点开始导出：按 图片 / 动态图 / 视频 三个子文件夹保存'
+        : '勾选作品 → 选类型 → 点开始导出：注意「服务器目录」是远程那台机器的盘，要落到你自己电脑请选「下载到本机」'));
   updatePlan();
 }
 ['image', 'live', 'video'].forEach((k) => {
@@ -1387,11 +1405,53 @@ $('packPill').onclick = () => {
   updatePlan();
 };
 $('planQuarkPath').oninput = updatePlan;
-$('btnPlanDir').onclick = () => {
+let dirHandle = null;
+$('btnPlanDir').onclick = async () => {
+  if (state.config && state.config.picker === 'native') {
+    $('msg').textContent = '已弹出系统「浏览文件夹」窗口，请在电脑上选择…';
+    try {
+      const r = await api('/api/pick-dir', { method: 'POST', body: '{}' });
+      $('saveDir').value = r.downloadRoot;
+      $('msg').innerHTML = '<span class="ok">已选择：' + r.downloadRoot + '</span>';
+      updatePlan();
+      loadFiles();
+    } catch (e) {
+      $('msg').innerHTML = '<span class="err">' + e.message + '</span>';
+    }
+    return;
+  }
   $('dirPick').style.display = '';
   browseDirs($('saveDir').value.trim());
   $('saveDir').scrollIntoView({ behavior: 'smooth', block: 'center' });
 };
+$('btnFsa').onclick = async () => {
+  try {
+    dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+    $('fsaName').textContent = '已选本机文件夹：' + dirHandle.name;
+  } catch (e) {
+    dirHandle = null;
+    $('fsaName').textContent = '未选择（你取消了，或浏览器不允许）';
+  }
+  updatePlan();
+};
+async function writeToDirHandle(names) {
+  let n = 0;
+  for (const rel of names) {
+    const parts = rel.split('/');
+    const leaf = parts.pop();
+    let dir = dirHandle;
+    for (const seg of parts) dir = await dir.getDirectoryHandle(seg, { create: true });
+    const r = await fetch(withToken('/api/files/download?name=' + encodeURIComponent(rel)));
+    if (!r.ok) continue;
+    const fh = await dir.getFileHandle(leaf, { create: true });
+    const w = await fh.createWritable();
+    await w.write(await r.blob());
+    await w.close();
+    n += 1;
+    $('msg').textContent = `正在写入本机文件夹 ${n}/${names.length}：${leaf}`;
+  }
+  return n;
+}
 $('btnPlanQuark').onclick = () => {
   openQuarkBody();
   $('quarkPanel').scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -1402,9 +1462,11 @@ function updatePlan() {
   $('planDir').textContent = ($('saveDir').value || '').trim() || '（未设置）';
   const t = currentTarget();
   let where = '';
-  if (t === 'local') where = '存到电脑 ' + ($('saveDir').value || '').trim();
-  else if (t === 'phone') where = '拉回手机相册';
+  const localMode = !(state.config && state.config.isLocal === false);
+  if (t === 'local') where = (localMode ? '存到电脑 ' : '存到服务器 ') + ($('saveDir').value || '').trim();
+  else if (t === 'phone') where = '由本机浏览器拉回' + (dirHandle ? '并写入「' + dirHandle.name + '」' : '');
   else where = '传夸克网盘 ' + (($('planQuarkPath').value || '').trim() || '（未填路径）');
+  if (t === 'local' && dirHandle) where += ' + 写入本机「' + dirHandle.name + '」';
   $('planSummary').innerHTML = `已选 <b>${n}</b> 条 · ${types.join('+')} · ${state.pack ? '打包成 1 个 zip' : '按原文件逐个交付'} · ${where}`;
   const btn = $('btnStart');
   let blocked = '';

@@ -1052,6 +1052,8 @@ app.get('/api/config', (req, res) => {
     useCookies: appConfig.useCookies !== false,
     quality: appConfig.quality || 'best',
     quark: quarkInfo(),
+    picker: (HAS_PS && isLocalReq(req)) ? 'native' : 'page',
+    serverOs: process.platform,
   });
 });
 
@@ -1094,6 +1096,46 @@ app.post('/api/config', (req, res) => {
 
 // 页面内浏览目录：不依赖任何系统的图形弹窗，Windows 和 Linux 服务器都能用
 const DIR_DENY = new Set(['proc', 'sys', 'dev', 'run', 'snap', 'system volume information']);
+
+// 只有 Windows 本机版才有原生"浏览文件夹"弹窗；服务器上不存在图形界面，必须走别的交付方式
+const HAS_PS = IS_WIN && fs.existsSync('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe');
+
+app.post('/api/pick-dir', (req, res) => {
+  if (!isLocalReq(req)) {
+    return res.status(403).json({
+      fallback: true,
+      error: '这个弹窗只会出现在运行工具的那台机器上，从别的设备访问时用不了。'
+        + '要把文件落到你自己电脑，请选「下载到本机」；要选具体文件夹，请在电脑上用本机版（localhost 下浏览器允许直接写入）。',
+    });
+  }
+  if (!HAS_PS) {
+    return res.status(501).json({
+      fallback: true,
+      error: '这台机器上没有图形界面（Linux 服务器或无头环境），弹不出系统的"浏览文件夹"窗口。'
+        + '要下到你自己电脑：改用「下载到本机」，或在电脑上用本机版（双击启动工具）再选目录。',
+    });
+  }
+  const initial = getDownloadRoot().replace(/'/g, "''");
+  const ps = [
+    'Add-Type -AssemblyName System.Windows.Forms',
+    '$d = New-Object System.Windows.Forms.FolderBrowserDialog',
+    `$d.SelectedPath = '${initial}'`,
+    "if ($d.ShowDialog() -eq 'OK') { Write-Output $d.SelectedPath }",
+  ].join('; ');
+  execFile('powershell', ['-NoProfile', '-STA', '-Command', ps], { timeout: 120000 }, (err, stdout) => {
+    if (err) return res.status(500).json({ error: err.message });
+    const dir = String(stdout || '').trim();
+    if (!dir) return res.status(400).json({ error: '未选择目录' });
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      appConfig = { ...appConfig, downloadRoot: dir };
+      saveConfig(appConfig);
+      res.json({ ok: true, downloadRoot: dir });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+});
 
 app.get('/api/dirs', (req, res) => {
   let p = String(req.query.path || '').trim() || getDownloadRoot();
