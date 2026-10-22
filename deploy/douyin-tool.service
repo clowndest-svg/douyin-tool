@@ -9,9 +9,12 @@ ExecStart=/opt/node/bin/node server.js
 Environment=NODE_ENV=production
 Environment=HEADLESS=1
 Environment=PORT=3210
+Environment=BROWSER_IDLE_MIN=5
 Restart=always
 RestartSec=3
-MemoryMax=896M
+# 抖音一页就要 500MB+，空闲时浏览器会被 server.js 主动关掉，只剩 node 约 110MB
+MemoryHigh=960M
+MemoryMax=1152M
 OOMScoreAdjust=500
 CPUQuota=150%
 

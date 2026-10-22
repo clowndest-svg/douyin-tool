@@ -263,6 +263,7 @@ function pushLog(msg) {
 }
 
 async function ensureBrowser() {
+  lastBrowserUse = Date.now();
   if (context) {
     try {
       if (!page || page.isClosed()) page = context.pages()[0] || await context.newPage();
@@ -276,7 +277,16 @@ async function ensureBrowser() {
     headless: HEADLESS,
     viewport: HEADLESS ? { width: 1440, height: 900 } : null,
     userAgent: UA,
-    args: ['--no-sandbox', '--disable-blink-features=AutomationControlled', '--disable-dev-shm-usage'],
+    args: [
+      '--no-sandbox',
+      '--disable-blink-features=AutomationControlled',
+      '--disable-dev-shm-usage',
+      '--disable-gpu',
+      '--disable-software-rasterizer',
+      '--renderer-process-limit=1',
+      '--disable-extensions',
+      '--no-default-browser-check',
+    ],
     locale: 'zh-CN',
   };
   if (fs.existsSync(BUNDLED_CHROME)) {
@@ -300,6 +310,20 @@ async function ensureBrowser() {
   }
   return context;
 }
+
+// 浏览器很吃内存（抖音一个页就 500MB+），空闲就关掉，登录态留在 profile 里
+const BROWSER_IDLE_MS = (Number(process.env.BROWSER_IDLE_MIN) || 5) * 60000;
+let lastBrowserUse = 0;
+async function closeIdleBrowser() {
+  if (!context) return;
+  if (busy || downloadState.running || quarkState.running) return;
+  if (Date.now() - lastBrowserUse < BROWSER_IDLE_MS) return;
+  try { await context.close(); } catch (e) { /* 已经关了 */ }
+  context = null;
+  page = null;
+  pushLog(`浏览器空闲超 ${Math.round(BROWSER_IDLE_MS / 60000)} 分钟，已关闭释放内存（登录态存在 profile，下次自动复用）`);
+}
+setInterval(() => { closeIdleBrowser().catch(() => {}); }, 60000).unref();
 
 async function checkLogin() {
   if (!context) return { loggedIn: false, cookieCount: 0, browserOpen: false };
@@ -389,33 +413,42 @@ async function ensureLoginModal() {
   return false;
 }
 
+// 只在登录弹窗内部找二维码，并且必须真的是一张码图——否则会截到旁边的宣传图
 async function getQrBuffer() {
   const loggedIn = await ensureLoginModal();
-  if (loggedIn) return null;
-  const box = await page.evaluate(() => {
-    const labels = [...document.querySelectorAll('div, span')]
-      .filter(e => e.textContent.trim() === '扫码登录' && e.offsetParent !== null);
-    for (const label of labels) {
-      let node = label;
-      for (let depth = 0; depth < 7 && node; depth++) {
-        for (const media of node.querySelectorAll('img, canvas')) {
-          const r = media.getBoundingClientRect();
-          if (r.width >= 100 && r.height >= 100 && r.left > 0 && r.top > 0) {
-            return {
-              x: Math.floor(r.left),
-              y: Math.floor(r.top),
-              width: Math.ceil(r.width),
-              height: Math.ceil(r.height),
-            };
-          }
-        }
-        node = node.parentElement;
-      }
+  if (loggedIn) return { error: '已经登录了，不需要扫码' };
+  const found = await page.evaluate(() => {
+    const modal = document.querySelector('.douyin_login_new_class')
+      || [...document.querySelectorAll('div')]
+        .filter(e => e.offsetParent !== null && e.textContent.includes('扫码登录') && e.textContent.includes('验证码登录'))
+        .sort((a, b) => (a.offsetWidth * a.offsetHeight) - (b.offsetWidth * b.offsetHeight))[0];
+    if (!modal) return { error: '没找到登录弹窗，请点「打开登录窗口（备用）」重试' };
+    const mr = modal.getBoundingClientRect();
+    const cands = [...modal.querySelectorAll('img, canvas')];
+    const info = [];
+    for (const el of cands) {
+      const r = el.getBoundingClientRect();
+      info.push(el.tagName + ' ' + Math.round(r.width) + 'x' + Math.round(r.height) + ' ' + String(el.src || '').slice(0, 40));
+      if (r.width < 90 || r.height < 90) continue;
+      if (r.left < mr.left - 4 || r.top < mr.top - 4) continue;
+      const src = String(el.src || '');
+      const looksQr = el.tagName === 'CANVAS' || src.startsWith('data:image') || /qr/i.test(src);
+      if (!looksQr) continue;
+      return {
+        box: {
+          x: Math.floor(r.left), y: Math.floor(r.top),
+          width: Math.ceil(r.width), height: Math.ceil(r.height),
+        },
+      };
     }
-    return null;
-  }).catch(() => null);
-  if (!box) return null;
-  return await page.screenshot({ clip: box, type: 'png' });
+    return {
+      error: '抖音没给这台服务器返回二维码图片（弹窗里的图是 ' + (info.slice(0, 3).join('；') || '空') + '）。'
+        + '多半是服务器 IP 被风控。可以改用验证码登录，或在本机登录后点「把本机登录态同步到线上」。',
+    };
+  }).catch((e) => ({ error: '读取二维码元素失败：' + e.message }));
+  if (!found || found.error) return { error: (found && found.error) || '弹窗里没有二维码' };
+  const buf = await page.screenshot({ clip: found.box, type: 'png' });
+  return { buf };
 }
 
 async function refreshQr() {
@@ -441,43 +474,98 @@ async function refreshQr() {
 
 async function switchLoginTab(name) {
   await page.evaluate((tabName) => {
-    const el = [...document.querySelectorAll('span, div, button')]
+    const root = document.querySelector('.douyin_login_new_class') || document;
+    const el = [...root.querySelectorAll('span, div, button')]
       .find(e => e.textContent.trim() === tabName && e.offsetParent !== null);
     if (el) el.click();
   }, name).catch(() => {});
   await page.waitForTimeout(700);
 }
 
+// 抖音弹窗里有浮层会挡住真实点击，直接用 JS click 绕过命中测试
+async function clickInModal(text) {
+  return await page.evaluate((t) => {
+    const root = document.querySelector('.douyin_login_new_class') || document;
+    const cands = [...root.querySelectorAll('button, span, div, a')]
+      .filter(e => e.textContent.trim() === t && e.offsetParent !== null);
+    for (const el of cands) {
+      const r = el.getBoundingClientRect();
+      if (r.width > 0 && r.height > 0) { el.click(); return true; }
+    }
+    return false;
+  }, text).catch(() => false);
+}
+
+async function readLoginTip() {
+  return await page.evaluate(() => {
+    const root = document.querySelector('.douyin_login_new_class') || document;
+    const words = ['已发送', '发送成功', '请输入', '错误', '频繁', '上限', '滑块', '安全验证', '失败', '不正确', '过期', '收不到'];
+    const out = new Set();
+    for (const e of root.querySelectorAll('div,span,p')) {
+      if (e.children.length) continue;
+      const t = (e.textContent || '').trim();
+      if (t && t.length <= 40 && e.offsetParent !== null && words.some(w => t.includes(w))) out.add(t);
+    }
+    return [...out].slice(0, 4).join(' / ');
+  }).catch(() => '');
+}
+
+async function assertLoginModal() {
+  const login = await checkLogin();
+  if (login.loggedIn) throw new Error('本机已经登录抖音了，不需要再登录');
+  const has = await page.evaluate(() => {
+    const m = document.querySelector('.douyin_login_new_class');
+    return !!(m && m.offsetParent !== null);
+  }).catch(() => false);
+  if (!has) throw new Error('登录弹窗没弹出来：先点「打开登录窗口（备用）」让浏览器停在抖音页');
+}
+
+async function fillModalInput(placeholder, value) {
+  const loc = page.locator(`input[placeholder="${placeholder}"]`).first();
+  try {
+    await loc.waitFor({ state: 'visible', timeout: 8000 });
+  } catch (e) {
+    throw new Error(`弹窗里找不到「${placeholder}」输入框（抖音页面可能改版，或弹窗没打开）`);
+  }
+  await loc.fill(value);
+}
+
 async function sendSms(phone) {
   await ensureLoginModal();
   await switchLoginTab('验证码登录');
-  const input = page.locator('input[placeholder="请输入手机号"]').first();
-  await input.fill(phone);
-  const btn = page.getByText('获取验证码', { exact: true }).first();
-  await btn.click({ timeout: 8000 });
-  return true;
+  await assertLoginModal();
+  await fillModalInput('请输入手机号', phone);
+  const clicked = await clickInModal('获取验证码');
+  if (!clicked) return { ok: false, error: '弹窗里找不到「获取验证码」按钮，可能抖音改版了' };
+  await page.waitForTimeout(2500);
+  const tip = await readLoginTip();
+  return { ok: true, tip };
 }
 
 async function submitSms(phone, code) {
   await ensureLoginModal();
   await switchLoginTab('验证码登录');
-  await page.locator('input[placeholder="请输入手机号"]').first().fill(phone);
-  await page.locator('input[placeholder="请输入验证码"]').first().fill(code);
-  const btn = page.getByText('登录', { exact: true }).last();
-  await btn.click({ timeout: 8000 });
-  await page.waitForTimeout(2500);
-  return await checkLogin();
+  await assertLoginModal();
+  await fillModalInput('请输入手机号', phone);
+  await fillModalInput('请输入验证码', code);
+  if (!(await clickInModal('登录'))) return { loggedIn: false, error: '找不到登录按钮' };
+  await page.waitForTimeout(3000);
+  const r = await checkLogin();
+  r.tip = await readLoginTip();
+  return r;
 }
 
 async function submitPassword(phone, password) {
   await ensureLoginModal();
   await switchLoginTab('密码登录');
-  await page.locator('input[placeholder="请输入手机号"]').first().fill(phone);
-  await page.locator('input[placeholder="请输入密码"]').first().fill(password);
-  const btn = page.getByText('登录', { exact: true }).last();
-  await btn.click({ timeout: 8000 });
-  await page.waitForTimeout(2500);
-  return await checkLogin();
+  await assertLoginModal();
+  await fillModalInput('请输入手机号', phone);
+  await fillModalInput('请输入密码', password);
+  if (!(await clickInModal('登录'))) return { loggedIn: false, error: '找不到登录按钮' };
+  await page.waitForTimeout(3000);
+  const r = await checkLogin();
+  r.tip = await readLoginTip();
+  return r;
 }
 
 async function searchUser(douyinId) {
@@ -1054,6 +1142,116 @@ app.post('/api/ytdlp/update', async (req, res) => {
   }
 });
 
+function postJson(urlStr, obj, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    let u;
+    try { u = new URL(urlStr); } catch (e) { return reject(new Error('地址不合法：' + urlStr)); }
+    const lib = u.protocol === 'https:' ? https : http;
+    const body = JSON.stringify(obj);
+    const req = lib.request(u, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+      timeout: timeoutMs || 30000,
+    }, (res) => {
+      const bufs = [];
+      res.on('data', (c) => bufs.push(c));
+      res.on('end', () => {
+        const text = Buffer.concat(bufs).toString('utf8');
+        let json = null;
+        try { json = JSON.parse(text); } catch (e) { /* 非 JSON 原样回传 */ }
+        resolve({ status: res.statusCode, json, text });
+      });
+    });
+    req.on('error', (e) => reject(new Error('连不上目标：' + e.message)));
+    req.on('timeout', () => req.destroy(new Error('请求超时')));
+    req.end(body);
+  });
+}
+
+function toAddCookie(c) {
+  let sameSite = ['Strict', 'Lax', 'None'].indexOf(c.sameSite) >= 0 ? c.sameSite : 'Lax';
+  const secure = !!c.secure;
+  if (sameSite === 'None' && !secure) sameSite = 'Lax';
+  return {
+    name: String(c.name),
+    value: String(c.value),
+    domain: String(c.domain),
+    path: c.path ? String(c.path) : '/',
+    expires: Number(c.expires) > 0 ? Number(c.expires) : -1,
+    httpOnly: !!c.httpOnly,
+    secure,
+    sameSite,
+  };
+}
+
+async function collectDouyinCookies() {
+  if (!context) throw new Error('本机浏览器还没打开：先点「打开登录窗口（备用）」登录抖音');
+  const login = await checkLogin();
+  if (!login.loggedIn) throw new Error('本机还没登录抖音，没有可导出的登录态');
+  const all = await context.cookies();
+  const dy = all.filter(c => /douyin\.com|bytedance|byteimg/i.test(c.domain)).map(toAddCookie);
+  if (!dy.some(c => c.name === 'sessionid' || c.name === 'sessionid_ss')) {
+    throw new Error('本机 cookies 里没有 sessionid，不像有效登录态');
+  }
+  return dy;
+}
+
+app.get('/api/login/export', async (req, res) => {
+  try {
+    const cookies = await collectDouyinCookies();
+    res.json({ count: cookies.length, nickname: (currentUser && currentUser.nickname) || '' });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.post('/api/login/import', async (req, res) => {
+  const list = Array.isArray(req.body && req.body.cookies) ? req.body.cookies : [];
+  let clean;
+  try {
+    clean = list
+      .filter(c => c && c.name && c.value && c.domain)
+      .map(toAddCookie);
+  } catch (e) {
+    return res.status(400).json({ error: 'cookies 格式不对：' + e.message });
+  }
+  if (!clean.length) return res.status(400).json({ error: '没有收到任何 cookie' });
+  if (!clean.some(c => c.name === 'sessionid' || c.name === 'sessionid_ss')) {
+    return res.status(400).json({ error: '收到的 cookies 里没有 sessionid，拒绝导入' });
+  }
+  try {
+    await ensureBrowser();
+    await context.addCookies(clean);
+    const login = await checkLogin();
+    pushLog(`导入外部抖音登录态 ${clean.length} 条 cookie → ${login.loggedIn ? '已登录' : '仍未登录（可能被风控或登录态已过期）'}`);
+    res.json({ ok: login.loggedIn, imported: clean.length, loggedIn: login.loggedIn, error: login.loggedIn ? '' : '导入成功但抖音侧仍判定未登录，说明这份登录态已失效或本机 IP 被风控' });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/login/sync', async (req, res) => {
+  const target = String((req.body && req.body.target) || '').trim();
+  let u;
+  try { u = new URL(target); } catch (e) {
+    return res.status(400).json({ error: '请填写完整线上地址，例如 http://1.2.3.4:3210/?token=xxxx' });
+  }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return res.status(400).json({ error: '只支持 http/https 地址' });
+  const token = u.searchParams.get('token') || '';
+  try {
+    const cookies = await collectDouyinCookies();
+    const r = await postJson(`${u.protocol}//${u.host}/api/login/import?token=${encodeURIComponent(token)}`, { cookies }, 45000);
+    if (r.json && r.json.loggedIn) {
+      res.json({ ok: true, count: cookies.length, remote: u.host, loggedIn: true });
+    } else {
+      const why = (r.json && (r.json.error || r.json.message)) || `HTTP ${r.status} ${r.text.slice(0, 120)}`;
+      res.status(502).json({ error: '线上导入没成功：' + why, count: cookies.length });
+    }
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get('/api/debug/dom', async (req, res) => {
   try {
     await ensureLoginModal();
@@ -1115,10 +1313,10 @@ app.get('/api/login/status', async (req, res) => {
 
 app.get('/api/login/qr', async (req, res) => {
   try {
-    const buf = await getQrBuffer();
-    if (!buf) return res.status(404).json({ error: '已登录或未找到二维码，请点“刷新二维码”' });
+    const r = await getQrBuffer();
+    if (r.error) return res.status(409).json({ error: r.error });
     res.set('Cache-Control', 'no-store');
-    res.type('png').send(buf);
+    res.type('png').send(r.buf);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -1137,8 +1335,9 @@ app.post('/api/login/sms/send', async (req, res) => {
   const phone = String((req.body && req.body.phone) || '').trim();
   if (!/^1\d{10}$/.test(phone)) return res.status(400).json({ error: '手机号格式不正确' });
   try {
-    await sendSms(phone);
-    res.json({ ok: true });
+    const r = await sendSms(phone);
+    if (r && r.ok === false) return res.status(500).json({ error: r.error });
+    res.json({ ok: true, tip: (r && r.tip) || '' });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

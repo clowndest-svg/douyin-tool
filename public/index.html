@@ -86,6 +86,7 @@
       <div class="login-col">
         <div class="muted">扫码登录（用抖音 App 扫码）</div>
         <div class="qr-box"><img id="qrImg" alt="加载中"></div>
+        <div class="muted" id="qrErr" style="display:none;color:#ff6b6b;margin:6px 0"></div>
         <button class="ghost" id="btnRefreshQr">刷新二维码</button>
       </div>
       <div class="login-col">
@@ -106,6 +107,11 @@
           <input id="password" type="password" placeholder="密码">
           <button id="btnPwdLogin">登录</button>
         </div>
+        <div class="row" style="margin-top:10px">
+          <input type="text" id="syncTarget" placeholder="线上地址，例如 http://124.220.54.64:3210/?token=xxxx" style="flex:2;min-width:180px">
+          <button class="ghost" id="btnSyncLogin" style="flex:1;white-space:nowrap">把本机登录态同步过去</button>
+        </div>
+        <div class="muted" id="syncMsg" style="margin-top:4px">在本机（双击启动的那个）登录成功后，填线上地址点一下即可，线上不用再登录。走的是 HTTP 明文，仅自用建议。</div>
         <div class="muted" id="loginMsg" style="margin-top:8px"></div>
       </div>
     </div>
@@ -331,7 +337,27 @@ function setLoggedInUI(loggedIn) {
 
 function loadQr() {
   if (state.loggedIn) return;
-  $('qrImg').src = withToken('/api/login/qr?t=' + Date.now());
+  const img = $('qrImg'), err = $('qrErr');
+  return fetch(withToken('/api/login/qr?t=' + Date.now())).then(async (r) => {
+    const ct = r.headers.get('content-type') || '';
+    if (r.ok && ct.indexOf('image') >= 0) {
+      const blob = await r.blob();
+      if (img.dataset.url) URL.revokeObjectURL(img.dataset.url);
+      img.dataset.url = URL.createObjectURL(blob);
+      img.src = img.dataset.url;
+      img.style.display = '';
+      err.style.display = 'none';
+    } else {
+      const j = await r.json().catch(() => ({ error: '二维码获取失败（HTTP ' + r.status + '）' }));
+      img.style.display = 'none';
+      err.textContent = j.error || '二维码获取失败';
+      err.style.display = '';
+    }
+  }).catch((e) => {
+    img.style.display = 'none';
+    err.textContent = '二维码请求失败：' + e.message;
+    err.style.display = '';
+  });
 }
 
 async function refreshLogin() {
@@ -366,6 +392,21 @@ $('btnRefreshQr').onclick = async () => {
   } catch (e) { $('loginMsg').innerHTML = '<span class="err">' + e.message + '</span>'; }
 };
 
+$('btnSyncLogin').onclick = async () => {
+  const target = $('syncTarget').value.trim();
+  if (!target) { $('syncMsg').innerHTML = '<span class="err">先填线上完整地址（含 ?token=）</span>'; return; }
+  $('btnSyncLogin').disabled = true;
+  $('syncMsg').textContent = '正在导出本机登录态并推送到线上…';
+  try {
+    const r = await api('/api/login/sync', { method: 'POST', body: JSON.stringify({ target }) });
+    $('syncMsg').innerHTML = `<span class="ok">已把 ${r.count} 条 cookie 同步到 ${r.remote}，线上已登录</span>`;
+  } catch (e) {
+    $('syncMsg').innerHTML = '<span class="err">' + e.message + '</span>';
+  } finally {
+    $('btnSyncLogin').disabled = false;
+  }
+};
+
 document.querySelectorAll('.tab').forEach(tab => {
   tab.onclick = () => {
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
@@ -383,8 +424,10 @@ $('btnSendCode').onclick = async () => {
   $('btnSendCode').disabled = true;
   $('loginMsg').textContent = '正在发送验证码…';
   try {
-    await api('/api/login/sms/send', { method: 'POST', body: JSON.stringify({ phone }) });
-    $('loginMsg').textContent = '验证码已发送，请查看手机短信';
+    const r = await api('/api/login/sms/send', { method: 'POST', body: JSON.stringify({ phone }) });
+    $('loginMsg').innerHTML = r && r.tip
+      ? '抖音返回：' + r.tip
+      : '已点「获取验证码」，抖音没回提示。请查收短信；收不到就用本机版登录后「同步登录态到线上」。';
     let n = 60;
     sendTimer = setInterval(() => {
       n -= 1;
