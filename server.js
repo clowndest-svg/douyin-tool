@@ -752,26 +752,31 @@ function subDirs(dir) {
   return [dir, path.join(dir, SUB_IMAGE), path.join(dir, SUB_LIVE), path.join(dir, SUB_VIDEO)];
 }
 
-async function downloadItem(item, dir, onProgress, onFile) {
+async function downloadItem(item, dir, onProgress, onFile, types) {
+  const t = types || { image: true, live: true, video: true };
   const base = fileBase(item);
   const written = [];
   if (item.is_image && item.images.length) {
+    if (!t.image && !t.live) return written;
     const imgDir = path.join(dir, SUB_IMAGE);
     const liveDir = path.join(dir, SUB_LIVE);
-    fs.mkdirSync(imgDir, { recursive: true });
-    fs.mkdirSync(liveDir, { recursive: true });
+    if (t.image) fs.mkdirSync(imgDir, { recursive: true });
+    if (t.live) fs.mkdirSync(liveDir, { recursive: true });
     for (let i = 0; i < item.images.length; i++) {
       const img = item.images[i];
-      const p = path.join(imgDir, `${base}_${i + 1}${guessImageExt(img.url)}`);
-      await downloadFile(img.url, p, onProgress);
-      written.push(p);
-      if (img.video) {
+      if (t.image) {
+        const p = path.join(imgDir, `${base}_${i + 1}${guessImageExt(img.url)}`);
+        await downloadFile(img.url, p, onProgress);
+        written.push(p);
+      }
+      if (img.video && t.live) {
         const lp = path.join(liveDir, `${base}_${i + 1}_live.mp4`);
         await downloadFile(img.video, lp, onProgress);
         written.push(lp);
       }
     }
   } else {
+    if (!t.video) return written;
     const vidDir = path.join(dir, SUB_VIDEO);
     fs.mkdirSync(vidDir, { recursive: true });
     const p = path.join(vidDir, `${base}.mp4`);
@@ -822,10 +827,16 @@ async function withRetry(fn, retries) {
   throw lastErr;
 }
 
+function normalizeTypes(raw) {
+  if (!raw || typeof raw !== 'object') return { image: true, live: true, video: true };
+  return { image: raw.image !== false, live: raw.live !== false, video: raw.video !== false };
+}
+
 async function runDownload(items, opts) {
   const target = (opts && opts.target) || 'local';
+  const types = normalizeTypes(opts && opts.types);
   const safe = getSafeMode();
-  downloadState = { running: true, total: items.length, done: 0, failed: 0, skipped: 0, current: '', log: [], safeMode: safe, target, produced: [], quarkError: '' };
+  downloadState = { running: true, total: items.length, done: 0, failed: 0, skipped: 0, current: '', log: [], safeMode: safe, target, types, pack: !!(opts && opts.pack), produced: [], zip: '', packError: '', quarkError: '' };
   const user = currentUser || { nickname: 'unknown' };
   const dir = path.join(getDownloadRoot(), sanitize(user.nickname, 40));
   fs.mkdirSync(dir, { recursive: true });
@@ -849,12 +860,19 @@ async function runDownload(items, opts) {
       const written = await withRetry(() => downloadItem(item, dir,
         (received, total) => { downloadState.fileProgress = { received, total }; },
         (f) => downloadState.produced.push(relToRoot(f)),
+        types,
       ), safe ? 1 : 2);
-      downloadState.done += 1;
       downloadState.fileProgress = null;
       failStreak = 0;
-      bumpTodayCount(1);
-      pushLog(`完成 ${downloadState.done}/${downloadState.total}: ${base}（${written.length} 个文件）`);
+      if (!written.length) {
+        downloadState.done += 1;
+        downloadState.skipped += 1;
+        pushLog(`按所选类型跳过（没有要下的内容）: ${base}`);
+      } else {
+        downloadState.done += 1;
+        bumpTodayCount(1);
+        pushLog(`完成 ${downloadState.done}/${downloadState.total}: ${base}（${written.length} 个文件）`);
+      }
     } catch (e) {
       downloadState.failed += 1;
       failStreak += 1;
@@ -872,6 +890,17 @@ async function runDownload(items, opts) {
     }
   }
   pushLog(`全部结束：成功 ${downloadState.done - downloadState.skipped}，跳过 ${downloadState.skipped}，失败 ${downloadState.failed}`);
+  if (opts && opts.pack && downloadState.produced.length) {
+    try {
+      const z = await packFiles(downloadState.produced, sanitize(user.nickname, 30) + '_打包_' + Date.now());
+      downloadState.zip = z.name;
+      downloadState.produced = [z.name];
+      pushLog(`已打包成压缩包：${z.name}（${(z.size / 1048576).toFixed(1)} MB，${z.packed} 个文件）`);
+    } catch (e) {
+      downloadState.packError = e.message;
+      pushLog('打包失败，改为交付零散文件：' + e.message);
+    }
+  }
   if (target === 'quark') {
     const names = downloadState.produced;
     const qpath = String((opts && opts.quarkPath) || quarkInfo().rootPath) + '/' + sanitize(user.nickname, 40);
@@ -981,6 +1010,17 @@ async function runYtdlpDownload(urls, title, quality, opts) {
     }
   }
   pushLog(`全部结束：成功 ${downloadState.done - downloadState.skipped}，跳过 ${downloadState.skipped}，失败 ${downloadState.failed}`);
+  if (opts && opts.pack && downloadState.produced.length) {
+    try {
+      const z = await packFiles(downloadState.produced, sanitize(title, 30) + '_打包_' + Date.now());
+      downloadState.zip = z.name;
+      downloadState.produced = [z.name];
+      pushLog(`已打包成压缩包：${z.name}（${(z.size / 1048576).toFixed(1)} MB，${z.packed} 个文件）`);
+    } catch (e) {
+      downloadState.packError = e.message;
+      pushLog('打包失败，改为交付零散文件：' + e.message);
+    }
+  }
   if (target === 'quark') {
     const names = downloadState.produced;
     const qpath = String((opts && opts.quarkPath) || quarkInfo().rootPath) + '/' + sanitize(title, 40);
@@ -1462,8 +1502,13 @@ app.post('/api/download', async (req, res) => {
   if (downloadState.running) return res.status(409).json({ error: '下载任务进行中' });
   const body = req.body || {};
   const target = ['local', 'phone', 'quark'].indexOf(body.target) >= 0 ? body.target : 'local';
-  if (target === 'quark' && !getQuarkCookie()) {
-    return res.status(400).json({ error: '还没连接夸克网盘：请先在「夸克网盘」面板粘贴 Cookie 或登录，再选网盘为去向' });
+  if (target === 'quark') {
+    if (!getQuarkCookie()) {
+      return res.status(400).json({ error: '还没连接夸克网盘：请先在「夸克网盘」面板扫码登录，再选网盘为去向' });
+    }
+    if (!String(body.quarkPath || '').trim()) {
+      return res.status(400).json({ error: '上传到夸克网盘要先指定网盘目录（在「夸克网盘」面板里选或填一个路径）' });
+    }
   }
   const ids = Array.isArray(body.awemeIds) ? body.awemeIds : [];
   const items = ids.length
@@ -1480,7 +1525,7 @@ app.post('/api/download', async (req, res) => {
       return res.status(429).json({ error: `今日安全额度剩余 ${Math.max(0, left)} 条，本次 ${items.length} 条超限，请明天再下或调高每日上限` });
     }
   }
-  runDownload(items, { target, quarkPath: body.quarkPath }).catch(e => pushLog('下载任务异常：' + e.message));
+  runDownload(items, { target, quarkPath: body.quarkPath, types: body.types, pack: !!body.pack }).catch(e => pushLog('下载任务异常：' + e.message));
   res.json({ started: true, count: items.length, target });
 });
 
@@ -1704,9 +1749,7 @@ app.get('/api/quark/task', (req, res) => {
   res.json(quarkState);
 });
 
-app.post('/api/pack', async (req, res) => {
-  const names = Array.isArray(req.body && req.body.names) ? req.body.names.map(String) : [];
-  if (!names.length) return res.status(400).json({ error: '没有选择文件' });
+async function packFiles(names, zipName) {
   const entries = [];
   const missing = [];
   for (const n of names) {
@@ -1718,18 +1761,24 @@ app.post('/api/pack', async (req, res) => {
       missing.push(n + '（' + e.message + '）');
     }
   }
-  if (!entries.length) return res.status(400).json({ error: '所选文件在本机都不存在，无法打包' });
+  if (!entries.length) throw new Error('要打包的文件在本机都不存在');
   const outDir = path.join(getDownloadRoot(), '_压缩包');
   fs.mkdirSync(outDir, { recursive: true });
-  const zipName = sanitize(String((req.body && req.body.zipName) || ('打包_' + Date.now())), 60) + '.zip';
-  const outPath = path.join(outDir, zipName);
+  const outPath = path.join(outDir, sanitize(String(zipName || ('打包_' + Date.now())), 60) + '.zip');
+  await quark.createZip(outPath, entries);
+  const size = fs.statSync(outPath).size;
+  pushLog(`打包完成：${path.basename(outPath)}，${entries.length} 个文件，${(size / 1048576).toFixed(1)} MB`);
+  return { name: relToRoot(outPath), size, packed: entries.length, missing };
+}
+
+app.post('/api/pack', async (req, res) => {
+  const names = Array.isArray(req.body && req.body.names) ? req.body.names.map(String) : [];
+  if (!names.length) return res.status(400).json({ error: '没有选择文件' });
   try {
-    const r = await quark.createZip(outPath, entries);
-    const size = fs.statSync(outPath).size;
-    pushLog(`打包完成：${zipName}，${entries.length} 个文件，${(size / 1048576).toFixed(1)} MB`);
-    res.json({ ok: true, name: relToRoot(outPath), size, packed: entries.length, missing });
+    const r = await packFiles(names, req.body && req.body.zipName);
+    res.json(Object.assign({ ok: true }, r));
   } catch (e) {
-    res.status(500).json({ error: '打包失败：' + e.message });
+    res.status(400).json({ error: '打包失败：' + e.message });
   }
 });
 

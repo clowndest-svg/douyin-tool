@@ -67,6 +67,59 @@
   .qk-item .nm { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer; }
   .pathbar { background:#0c0e12; border:1px solid var(--line); border-radius:8px; padding:8px 10px; font-size:12px; color:var(--muted); word-break:break-all; }
   @media (max-width:760px) { .login-grid { grid-template-columns:1fr; } }
+
+  /* ===== 导出方案 / 进度组件（1.7 视觉改版） ===== */
+  :root { --accent2:#7c5cff; --glow:0 8px 24px rgba(255,45,85,.25); }
+  body { background:radial-gradient(1200px 600px at 15% -10%, #1b2030 0%, var(--bg) 55%) fixed; }
+  .panel { box-shadow:0 2px 14px rgba(0,0,0,.28); transition:box-shadow .25s,border-color .25s; }
+  .panel:hover { border-color:#303748; }
+  h1 { background:linear-gradient(92deg,#fff,#b9c2d8); -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent; }
+  .pill { display:inline-flex; align-items:center; gap:6px; background:#0c0e12; border:1px solid var(--line); color:var(--muted);
+    border-radius:999px; padding:7px 14px; font-size:13px; cursor:pointer; transition:.18s; user-select:none; }
+  .pill:hover { border-color:#3a4254; color:var(--text); }
+  .pill.on { background:linear-gradient(92deg,var(--accent),#ff5c7a); border-color:transparent; color:#fff; box-shadow:0 4px 14px rgba(255,45,85,.28); }
+  .pill.on.v2 { background:linear-gradient(92deg,var(--accent2),#4d7cff); box-shadow:0 4px 14px rgba(124,92,255,.3); }
+  .pill input { accent-color:#fff; margin:0; }
+  .plan { border:1px solid var(--line); border-radius:12px; background:linear-gradient(180deg,#1a1e27,#151821); padding:14px; margin-bottom:12px; }
+  .plan-row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  .plan-row + .plan-row { margin-top:12px; }
+  .plan-k { color:var(--muted); font-size:12px; width:64px; flex:none; }
+  .btn-big { background:linear-gradient(92deg,var(--accent),var(--accent2)); border:0; border-radius:10px; padding:12px 22px;
+    font-size:15px; font-weight:600; color:#fff; box-shadow:var(--glow); transition:transform .15s,box-shadow .2s,filter .2s; }
+  .btn-big:hover:not(:disabled) { transform:translateY(-1px); filter:brightness(1.08); box-shadow:0 10px 28px rgba(255,45,85,.35); }
+  .btn-big:active:not(:disabled) { transform:translateY(0); }
+  .btn-big:disabled { filter:grayscale(.5); opacity:.55; box-shadow:none; cursor:not-allowed; }
+  .hint { font-size:12px; color:var(--muted); }
+  .hint.warn { color:#ffb020; }
+  .hint.err { color:#ff6b6b; }
+  .hint.ok { color:var(--ok); }
+  .prog { background:#0a0c10; border:1px solid var(--line); border-radius:10px; height:12px; overflow:hidden; position:relative; }
+  .prog > i { display:block; height:100%; width:0; border-radius:10px;
+    background:linear-gradient(90deg,var(--accent),#ff6b9d,var(--accent2)); background-size:200% 100%;
+    transition:width .45s cubic-bezier(.22,.61,.36,1); animation:slide 1.6s linear infinite; }
+  .prog.up > i { background:linear-gradient(90deg,var(--accent2),#39d0ff,var(--ok)); background-size:200% 100%; }
+  .prog.done > i { animation:none; background:linear-gradient(90deg,#2ecc71,#27c93f); }
+  .prog.err > i { animation:none; background:#ff5252; }
+  @keyframes slide { from { background-position:0 0; } to { background-position:-200% 0; } }
+  .prog.sm { height:6px; }
+  .pct { font:600 13px/1 Consolas,monospace; color:var(--text); min-width:44px; text-align:right; }
+  @keyframes pulse { 0%,100% { opacity:1; transform:scale(1); } 50% { opacity:.35; transform:scale(.82); } }
+  .live-dot { width:8px; height:8px; border-radius:50%; background:var(--accent); display:inline-block; animation:pulse 1.1s ease-in-out infinite; }
+  .prog-card { border:1px solid var(--line); border-radius:12px; padding:14px; background:linear-gradient(180deg,#181c25,#141720); margin-bottom:12px; }
+  @keyframes popin { 0% { transform:scale(.6); opacity:0; } 60% { transform:scale(1.12); opacity:1; } 100% { transform:scale(1); } }
+  .pop { animation:popin .35s ease-out; }
+  .fold-h { display:flex; align-items:center; gap:10px; cursor:pointer; color:var(--muted); font-size:13px; }
+  .fold-h .caret { transition:transform .2s; display:inline-block; }
+  .fold-h.open .caret { transform:rotate(90deg); }
+  .log { transition:max-height .3s ease; }
+  ::-webkit-scrollbar { width:9px; height:9px; }
+  ::-webkit-scrollbar-thumb { background:#2b313e; border-radius:8px; }
+  ::-webkit-scrollbar-thumb:hover { background:#3a4254; }
+  ::-webkit-scrollbar-track { background:transparent; }
+  tr { transition:background .15s; }
+  tbody tr:hover { background:#1c2029; }
+  tbody td:last-child { white-space:nowrap; }
+  th { white-space:nowrap; }
 </style>
 </head>
 <body>
@@ -200,17 +253,44 @@
       <button class="ghost" id="btnAll">全选</button>
       <button class="ghost" id="btnNone">取消全选</button>
       <span class="muted" id="selInfo">已选 0 / 0</span>
-      <span class="muted" style="font-size:12px">单次最多 50 条，超出自动分批（批间冷却 20 秒）</span>
-      <span class="muted" style="white-space:nowrap">保存到</span>
-      <span class="seg" id="targetSeg">
-        <button type="button" data-t="local" class="on">电脑</button>
-        <button type="button" data-t="phone">手机相册</button>
-        <button type="button" data-t="quark">夸克网盘</button>
-      </span>
       <span class="spacer"></span>
       <button class="ghost" id="btnCsv">导出列表 CSV</button>
-      <button class="ghost" id="btnDownloadSel">下载所选</button>
-      <button id="btnDownloadAll">下载全部</button>
+    </div>
+
+    <div class="plan" id="planBox">
+      <div class="plan-row">
+        <span class="plan-k">内容类型</span>
+        <span class="pill on" id="tyImage" data-ty="image">图片</span>
+        <span class="pill on" id="tyLive" data-ty="live">动态图</span>
+        <span class="pill on" id="tyVideo" data-ty="video">视频</span>
+        <span class="pill" id="packPill">合成一个压缩包</span>
+      </div>
+      <div class="plan-row">
+        <span class="plan-k">保存到</span>
+        <span id="targetSeg">
+          <span class="pill on v2" data-t="local">电脑</span>
+          <span class="pill v2" data-t="phone">手机相册</span>
+          <span class="pill v2" data-t="quark">夸克网盘</span>
+        </span>
+        <span class="spacer" style="flex:1"></span>
+        <button class="btn-big" id="btnStart">开始导出</button>
+      </div>
+      <div class="plan-row" id="planLocalRow">
+        <span class="plan-k">电脑目录</span>
+        <span class="muted" id="planDir" style="flex:1;word-break:break-all">-</span>
+        <button class="ghost" id="btnPlanDir">更换目录</button>
+      </div>
+      <div class="plan-row" id="planPhoneRow" style="display:none">
+        <span class="plan-k">手机相册</span>
+        <span class="hint" id="planPhoneHint">下载完由本机浏览器逐个拉回手机；用 App 打开的直接进相册，用浏览器打开的落在下载目录。</span>
+      </div>
+      <div class="plan-row" id="planQuarkRow" style="display:none">
+        <span class="plan-k">网盘路径</span>
+        <input type="text" id="planQuarkPath" placeholder="/抖音下载器" style="flex:1">
+        <span class="muted" id="planQuarkState">-</span>
+        <button class="ghost" id="btnPlanQuark">去连接 / 选目录</button>
+      </div>
+      <div class="plan-row"><span class="hint" id="planSummary">-</span></div>
     </div>
     <div class="list">
       <table>
@@ -232,9 +312,35 @@
   </div>
 
   <div class="panel" id="dlPanel" style="display:none">
-    <div class="row"><b>下载进度</b><span class="spacer" style="flex:1"></span><span class="muted" id="dlInfo">-</span></div>
-    <div class="progress"><i id="bar"></i></div>
-    <div class="log" id="log"></div>
+    <div class="prog-card">
+      <div class="row" style="margin-bottom:10px">
+        <span class="live-dot" id="dlDot"></span><b>下载进度</b>
+        <span class="muted" id="dlSub">准备中…</span>
+        <span class="spacer" style="flex:1"></span>
+        <span class="muted" id="dlCount">0 / 0</span><span class="pct" id="dlPct">0%</span>
+      </div>
+      <div class="prog" id="dlBarWrap"><i id="bar"></i></div>
+      <div class="row" style="margin-top:10px">
+        <span class="hint" id="dlCur" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">-</span>
+        <span class="muted" id="dlFilePct"></span>
+      </div>
+      <div class="prog sm" style="margin-top:6px"><i id="fileBar"></i></div>
+    </div>
+    <div class="prog-card" id="upCard" style="display:none">
+      <div class="row" style="margin-bottom:10px">
+        <span class="live-dot" id="upDot"></span><b>上传到夸克网盘</b>
+        <span class="muted" id="upSub">准备中…</span>
+        <span class="spacer" style="flex:1"></span>
+        <span class="muted" id="upCount">0 / 0</span><span class="pct" id="upPct">0%</span>
+      </div>
+      <div class="prog up" id="upBarWrap"><i id="upBar"></i></div>
+      <div class="row" style="margin-top:10px">
+        <span class="hint" id="upCur" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">-</span>
+        <span class="muted" id="upPhase"></span>
+      </div>
+    </div>
+    <div class="fold-h" id="btnLogFold"><span class="caret">▸</span><span>查看运行日志</span></div>
+    <div class="log" id="log" style="display:none;margin-top:8px"></div>
   </div>
 
   <div class="panel" id="quarkPanel">
@@ -281,12 +387,12 @@
   </div>
 
   <div class="panel" id="filesPanel" style="display:none">
-    <div class="row">
-      <b>已下载文件</b>
+    <div class="fold-h" id="btnFilesFold"><span class="caret">▸</span><b>历史文件</b><span class="muted">（单独打包 / 补传网盘 / 预览，主流程用不到）</span><span class="spacer" style="flex:1"></span><span class="muted" id="filesDir"></span></div>
+    <div id="filesBody" style="display:none">
+    <div class="row" style="margin-top:10px">
       <label class="muted"><input type="checkbox" id="fileAll"> 全选</label>
       <span class="muted" id="fileSelInfo">已选 0</span>
       <span class="spacer" style="flex:1"></span>
-      <span class="muted" id="filesDir"></span>
       <button class="ghost" id="btnRefreshFiles">刷新</button>
     </div>
     <div class="row" style="margin-top:8px">
@@ -301,6 +407,7 @@
         <tbody id="fileBody"></tbody>
       </table>
     </div>
+    </div>
   </div>
 </div>
 
@@ -309,7 +416,7 @@ const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
 if (params.get('token')) localStorage.setItem('dy_token', params.get('token'));
 const TOKEN = localStorage.getItem('dy_token') || '';
-let state = { user: null, videos: [], selected: new Set(), loggedIn: false, config: null, mode: 'douyin', target: 'local', files: [], fileSelected: new Set(), quark: null };
+let state = { user: null, videos: [], selected: new Set(), loggedIn: false, config: null, mode: 'douyin', target: 'local', files: [], fileSelected: new Set(), quark: null, types: { image: true, live: true, video: true }, pack: false };
 
 function withToken(url) {
   if (!TOKEN) return url;
@@ -626,6 +733,7 @@ function renderList() {
 
 function updateSelInfo() {
   $('selInfo').textContent = `已选 ${state.selected.size} / ${state.videos.length}`;
+  if (typeof updatePlan === 'function') updatePlan();
 }
 
 $('btnAll').onclick = () => { state.selected = new Set(state.videos.map(v => v.aweme_id)); renderList(); };
@@ -638,102 +746,126 @@ async function waitDownloadDone() {
   for (;;) {
     await new Promise(r => setTimeout(r, 1000));
     const s = await api('/api/status');
+    renderStatus(s);
     if (!s.running) return s;
   }
 }
 
-async function startDownload(ids) {
-  if (!ids.length) { alert('没有选中视频'); return; }
+async function startExport(ids) {
+  if (!ids || !ids.length) { alert('请先在列表里勾选作品'); return; }
   const target = currentTarget();
-  const quarkPath = ($('quarkPath').value || '').trim() || (state.quark && state.quark.rootPath) || '/抖音下载器';
-  if (target === 'quark' && !(state.quark && state.quark.loggedIn)) {
-    const go = confirm('夸克网盘现在还没连上（下载会照常存到电脑，但传不上网盘）。要先去连接夸克网盘吗？');
-    if (go) { openQuarkBody(); $('quarkPanel').scrollIntoView({ behavior: 'smooth' }); return; }
+  const types = { image: state.types.image, live: state.types.live, video: state.types.video };
+  const pack = state.pack;
+  const quarkPath = ($('planQuarkPath').value || '').trim();
+  if (target === 'quark' && !quarkReady()) {
+    const go = confirm('夸克网盘还没连接好（要已登录 + 已选目录）。下载会照常存到电脑，但传不上网盘。要先去连接吗？');
+    if (go) { $('btnPlanQuark').click(); return; }
   }
   const maxBatch = batchLimit();
   const batches = [];
   for (let i = 0; i < ids.length; i += maxBatch) batches.push(ids.slice(i, i + maxBatch));
   if (batches.length > 1) {
-    const ok = confirm(`共 ${ids.length} 条，将分 ${batches.length} 批下载（每批最多 ${maxBatch} 条，批间冷却 ${cooldownMs() / 1000} 秒）。继续？`);
+    const ok = confirm(`共 ${ids.length} 条，将分 ${batches.length} 批处理（每批最多 ${maxBatch} 条，批间冷却 ${cooldownMs() / 1000} 秒）。继续？`);
     if (!ok) return;
   }
-  $('btnDownloadSel').disabled = true;
-  $('btnDownloadAll').disabled = true;
+  $('btnStart').disabled = true;
+  $('dlPanel').style.display = '';
+  $('dlPanel').scrollIntoView({ behavior: 'smooth', block: 'start' });
   const produced = [];
+  let final = null;
   try {
     for (let b = 0; b < batches.length; b++) {
       const where = target === 'quark' ? '，完成后上传夸克网盘 ' + quarkPath : (target === 'phone' ? '，完成后拉回手机' : '');
-      $('msg').textContent = `正在下载第 ${b + 1}/${batches.length} 批（${batches[b].length} 条）${where}…`;
-      let final;
+      $('msg').textContent = `正在处理第 ${b + 1}/${batches.length} 批（${batches[b].length} 条）${where}…`;
       if (state.mode === 'url') {
         const urls = state.videos.filter(v => batches[b].includes(v.aweme_id)).map(v => v.source_url);
-        await api('/api/url/download', { method: 'POST', body: JSON.stringify({ urls, title: (state.user && state.user.nickname) || '通用下载', quality: $('quality').value, target, quarkPath }) });
+        await api('/api/url/download', { method: 'POST', body: JSON.stringify({ urls, title: (state.user && state.user.nickname) || '通用下载', quality: $('quality').value, target, quarkPath, pack }) });
       } else {
-        await api('/api/download', { method: 'POST', body: JSON.stringify({ awemeIds: batches[b], target, quarkPath }) });
+        await api('/api/download', { method: 'POST', body: JSON.stringify({ awemeIds: batches[b], target, quarkPath, types, pack }) });
       }
-      if (target === 'quark') pollQuarkTask();
-      $('dlPanel').scrollIntoView({ behavior: 'smooth' });
+      if (target === 'quark') { $('upCard').style.display = ''; pollQuarkTask(); }
       final = await waitDownloadDone();
-      (final.produced || []).forEach(n => produced.push(n));
+      (final.produced || []).forEach((n) => produced.push(n));
+      if (final.packError) $('msg').innerHTML = '<span class="err">打包环节：' + final.packError + '</span>';
       if (final.quarkError) $('msg').innerHTML = '<span class="err">网盘上传环节：' + final.quarkError + '</span>';
       if (b < batches.length - 1) {
         $('msg').textContent = `第 ${b + 1} 批完成，冷却 ${cooldownMs() / 1000} 秒后继续…`;
-        await new Promise(r => setTimeout(r, cooldownMs()));
+        await new Promise((r) => setTimeout(r, cooldownMs()));
       }
     }
-    batches.flat().forEach(id => {
-      const v = state.videos.find(x => x.aweme_id === id);
+    ids.forEach((id) => {
+      const v = state.videos.find((x) => x.aweme_id === id);
       if (v) v.downloaded = true;
     });
     renderList();
     if (target === 'phone') {
-      if (!produced.length) {
-        $('msg').innerHTML = '<span class="err">这一批没有产出文件，手机无东西可拉</span>';
-      } else {
+      if (!produced.length) $('msg').innerHTML = '<span class="err">这一批没有产出文件，手机无东西可拉</span>';
+      else {
         $('msg').innerHTML = `<span class="ok">下载完成 ${produced.length} 个文件，开始存到手机…</span>`;
         await saveToPhone(produced);
       }
     } else if (target === 'quark') {
-      $('msg').innerHTML = '<span class="ok">下载+上传流程结束，明细见「上传进度」日志</span>';
+      $('msg').innerHTML = '<span class="ok">下载 + 上传全部结束，明细见上传进度卡</span>';
+    } else if (final && final.packError) {
+      /* 上面已提示 */
     } else {
-      $('msg').innerHTML = '<span class="ok">全部批次下载完成</span>';
+      const zip = final && final.zip;
+      $('msg').innerHTML = '<span class="ok">全部完成' + (zip ? '，压缩包：' + zip : '') + '</span>';
     }
   } catch (e) {
     alert(e.message);
   } finally {
-    $('btnDownloadSel').disabled = false;
-    $('btnDownloadAll').disabled = false;
+    $('btnStart').disabled = false;
+    updatePlan();
     loadFiles();
   }
 }
-$('btnDownloadSel').onclick = () => startDownload([...state.selected]);
-$('btnDownloadAll').onclick = () => startDownload(state.videos.map(v => v.aweme_id));
+
+function renderStatus(s) {
+  if (!s || !s.total) return;
+  $('dlPanel').style.display = '';
+  const done = (s.done || 0) + (s.failed || 0);
+  const pct = s.total ? Math.round((done / s.total) * 100) : 0;
+  $('bar').style.width = pct + '%';
+  $('dlPct').textContent = pct + '%';
+  $('dlCount').textContent = `${done} / ${s.total}`;
+  $('dlDot').style.display = s.running ? '' : 'none';
+  const extra = [];
+  if (s.skipped) extra.push(`跳过 ${s.skipped}`);
+  if (s.failed) extra.push(`失败 ${s.failed}`);
+  if (s.zip) extra.push('压缩包 ' + s.zip.split('/').pop());
+  $('dlSub').textContent = (s.running ? (s.safeMode ? '安全模式进行中' : '进行中') : '已结束') + (extra.length ? '（' + extra.join(' · ') + '）' : '');
+  const wrap = $('dlBarWrap');
+  wrap.classList.toggle('err', !!s.failed);
+  wrap.classList.toggle('done', !s.running && !s.failed);
+  $('dlCur').textContent = s.current ? ('当前：' + s.current) : (s.running ? '准备中…' : '全部完成');
+  const fp = s.fileProgress;
+  if (fp && fp.total) {
+    const p = Math.min(100, Math.round((fp.received / fp.total) * 100));
+    $('fileBar').style.width = p + '%';
+    $('dlFilePct').textContent = `本文件 ${(fp.received / 1048576).toFixed(1)} / ${(fp.total / 1048576).toFixed(1)} MB · ${p}%`;
+  } else if (fp && fp.received) {
+    $('fileBar').style.width = '100%';
+    $('dlFilePct').textContent = `本文件已收 ${(fp.received / 1048576).toFixed(1)} MB`;
+  } else {
+    $('fileBar').style.width = '0%';
+    $('dlFilePct').textContent = '';
+  }
+  $('log').textContent = (s.log || []).join('\n');
+  $('log').scrollTop = $('log').scrollHeight;
+}
 
 let lastRunning = false;
 async function refreshStatus() {
   try {
     const s = await api('/api/status');
-    if (s.total) {
-      $('dlPanel').style.display = '';
-      const fp = s.fileProgress;
-      let progressText = '';
-      if (fp && fp.total) {
-        const pct = Math.round((fp.received / fp.total) * 100);
-        progressText = ` · 当前文件 ${pct}%（${(fp.received / 1048576).toFixed(1)}/${(fp.total / 1048576).toFixed(1)} MB）`;
-      } else if (fp && fp.received) {
-        progressText = ` · 当前文件 ${(fp.received / 1048576).toFixed(1)} MB`;
-      }
-      $('dlInfo').textContent = `${s.done + s.failed} / ${s.total}（成功 ${s.done - (s.skipped || 0)}，跳过 ${s.skipped || 0}，失败 ${s.failed}）${s.running ? ' 下载中…' : ' 已结束'}${progressText}`;
-      $('bar').style.width = Math.round(((s.done + s.failed) / s.total) * 100) + '%';
-      $('log').textContent = (s.log || []).join('\n');
-      $('log').scrollTop = $('log').scrollHeight;
-      if (s.running) {
-        lastRunning = true;
-        setTimeout(refreshStatus, 1000);
-      } else if (lastRunning) {
-        lastRunning = false;
-        loadFiles();
-      }
+    renderStatus(s);
+    if (s.running) {
+      lastRunning = true;
+      setTimeout(refreshStatus, 1000);
+    } else if (lastRunning) {
+      lastRunning = false;
+      loadFiles();
     }
   } catch (e) { /* ignore */ }
 }
@@ -748,6 +880,7 @@ async function loadConfig() {
     $('useCookies').checked = c.useCookies !== false;
     $('quality').value = c.quality || 'best';
     updateSafeInfo();
+    updatePlan();
     if (c.isLocal && c.lan && c.lan.length) {
       const url = `http://${c.lan[0]}:${c.port}/?token=${c.token}`;
       $('lanAddr').textContent = url;
@@ -840,8 +973,21 @@ $('btnDirPick').onclick = async () => {
     $('saveDir').value = dirNow;
     $('dirPick').style.display = 'none';
     $('msg').innerHTML = '<span class="ok">下载目录已设为 ' + dirNow + '</span>';
+    updatePlan();
     loadFiles();
   } catch (e) { $('msg').innerHTML = '<span class="err">' + e.message + '</span>'; }
+};
+
+$('btnLogFold').onclick = () => {
+  const open = $('log').style.display !== 'none';
+  $('log').style.display = open ? 'none' : '';
+  $('btnLogFold').classList.toggle('open', !open);
+  if (!open) $('log').scrollTop = $('log').scrollHeight;
+};
+$('btnFilesFold').onclick = () => {
+  const open = $('filesBody').style.display !== 'none';
+  $('filesBody').style.display = open ? 'none' : '';
+  $('btnFilesFold').classList.toggle('open', !open);
 };
 
 function copyText(text) {
@@ -963,15 +1109,32 @@ async function saveToPhone(names) {
 }
 
 let quarkPollTimer = null;
+function renderUpload(s) {
+  $('upCard').style.display = '';
+  const total = s.total || 0;
+  const done = (s.done || 0) + (s.failed || 0);
+  const pct = total ? Math.round((done / total) * 100) : 0;
+  $('upBar').style.width = pct + '%';
+  $('upPct').textContent = pct + '%';
+  $('upCount').textContent = `${done} / ${total}`;
+  $('upDot').style.display = s.running ? '' : 'none';
+  const wrap = $('upBarWrap');
+  wrap.classList.toggle('err', !!s.failed);
+  wrap.classList.toggle('done', !s.running && !s.failed && !!total);
+  $('upSub').textContent = s.running ? '上传中' : (total ? '已结束' : '等待下载完成');
+  $('upCur').textContent = s.current ? ('当前：' + s.current) : (s.path ? ('目标目录：' + s.path) : '-');
+  const phaseMap = { hash: '算哈希', instant: '秒传命中', part: '传分片', complete: '合并', finish: '收尾' };
+  $('upPhase').textContent = s.phase ? (phaseMap[s.phase] || s.phase) : '';
+  $('quarkTaskInfo').textContent = `${done} / ${total}${s.current ? ' · ' + s.current : ''}${s.running ? ' 上传中…' : ' 已结束'}`;
+  $('quarkLog').textContent = (s.log || []).join('\n');
+  $('quarkLog').scrollTop = $('quarkLog').scrollHeight;
+}
 function pollQuarkTask() {
   clearTimeout(quarkPollTimer);
   quarkPollTimer = setTimeout(async () => {
     try {
       const s = await api('/api/quark/task');
-      $('quarkTaskInfo').textContent = `${s.done + s.failed} / ${s.total || 0}`
-        + (s.current ? ' · ' + s.current : '') + (s.running ? ' 上传中…' : ' 已结束');
-      $('quarkLog').textContent = (s.log || []).join('\n');
-      $('quarkLog').scrollTop = $('quarkLog').scrollHeight;
+      renderUpload(s);
       if (s.running) pollQuarkTask();
     } catch (e) { /* ignore */ }
   }, 1000);
@@ -988,7 +1151,11 @@ async function loadQuarkStatus() {
   try {
     const s = await api('/api/quark/status');
     state.quark = s;
-    if (s.rootPath) $('quarkPath').value = s.rootPath;
+    if (s.rootPath) {
+      $('quarkPath').value = s.rootPath;
+      if (!($('planQuarkPath').value || '').trim()) $('planQuarkPath').value = s.rootPath;
+    }
+    updatePlan();
     $('quarkStatus').innerHTML = s.loggedIn
       ? `<span class="ok">● 已连接</span> 根目录 ${s.rootCount} 项，Cookie 长度 ${s.cookieLen}`
       : (s.browserLoggedIn ? '<span class="ok">● 浏览器已扫码，正在自动导入…</span>'
@@ -1173,21 +1340,86 @@ $('btnQuarkMkdir').onclick = async () => {
 };
 $('btnQuarkPickDir').onclick = () => {
   $('quarkPath').value = '/' + (quarkCwd.path || '');
+  $('planQuarkPath').value = $('quarkPath').value;
   $('quarkBrowse').style.display = 'none';
+  updatePlan();
   $('btnQuarkSavePath').click();
 };
 
-// 手机/电脑/网盘三选一
+// ===== 导出方案：类型 / 去向 / 打包，全部在点导出之前定好 =====
 function currentTarget() { return state.target || 'local'; }
+function typeLabels() {
+  const t = state.types;
+  const on = [];
+  if (t.image) on.push('图片');
+  if (t.live) on.push('动态图');
+  if (t.video) on.push('视频');
+  return on;
+}
+function quarkReady() {
+  return !!(state.quark && state.quark.loggedIn && ($('planQuarkPath').value || '').trim());
+}
 function setTarget(t) {
   state.target = t;
-  [...$('targetSeg').children].forEach(b => b.classList.toggle('on', b.dataset.t === t));
+  [...$('targetSeg').children].forEach((b) => b.classList.toggle('on', b.dataset.t === t));
+  $('planLocalRow').style.display = t === 'local' ? '' : 'none';
+  $('planPhoneRow').style.display = t === 'phone' ? '' : 'none';
+  $('planQuarkRow').style.display = t === 'quark' ? '' : 'none';
   const txt = t === 'phone'
-    ? '勾选后点下载：文件先落在服务器/电脑，再由手机逐个拉回相册'
-    : (t === 'quark' ? '勾选后点下载：下完自动上传到上面的夸克网盘路径' : '输入抖音号 → 抓取作品 → 勾选下载，按 图片 / 动态图 / 视频 三个子文件夹保存');
+    ? '勾选作品 → 选类型 → 点开始导出：文件先落在服务器/电脑，再由本机浏览器逐个拉回手机'
+    : (t === 'quark' ? '勾选作品 → 选类型 → 点开始导出：下完自动打包并上传到夸克网盘指定目录' : '勾选作品 → 选类型 → 点开始导出：按 图片 / 动态图 / 视频 三个子文件夹保存');
   $('subLine').textContent = txt;
+  updatePlan();
 }
-[...$('targetSeg').children].forEach(b => { b.onclick = () => setTarget(b.dataset.t); });
+['image', 'live', 'video'].forEach((k) => {
+  const el = $('ty' + k[0].toUpperCase() + k.slice(1));
+  el.onclick = () => {
+    const on = !state.types[k];
+    if (!on && typeLabels().length === 1) { $('planSummary').innerHTML = '<span class="hint warn">至少保留一种内容类型</span>'; return; }
+    state.types[k] = on;
+    el.classList.toggle('on', on);
+    updatePlan();
+  };
+});
+$('packPill').onclick = () => {
+  state.pack = !state.pack;
+  $('packPill').classList.toggle('on', state.pack);
+  updatePlan();
+};
+$('planQuarkPath').oninput = updatePlan;
+$('btnPlanDir').onclick = () => {
+  $('dirPick').style.display = '';
+  browseDirs($('saveDir').value.trim());
+  $('saveDir').scrollIntoView({ behavior: 'smooth', block: 'center' });
+};
+$('btnPlanQuark').onclick = () => {
+  openQuarkBody();
+  $('quarkPanel').scrollIntoView({ behavior: 'smooth', block: 'start' });
+};
+function updatePlan() {
+  const n = state.selected.size;
+  const types = typeLabels();
+  $('planDir').textContent = ($('saveDir').value || '').trim() || '（未设置）';
+  const t = currentTarget();
+  let where = '';
+  if (t === 'local') where = '存到电脑 ' + ($('saveDir').value || '').trim();
+  else if (t === 'phone') where = '拉回手机相册';
+  else where = '传夸克网盘 ' + (($('planQuarkPath').value || '').trim() || '（未填路径）');
+  $('planSummary').innerHTML = `已选 <b>${n}</b> 条 · ${types.join('+')} · ${state.pack ? '打包成 1 个 zip' : '按原文件逐个交付'} · ${where}`;
+  const btn = $('btnStart');
+  let blocked = '';
+  if (!n) blocked = '请先在下面的列表里勾选作品';
+  else if (t === 'quark' && !quarkReady()) blocked = state.quark && state.quark.loggedIn ? '请填写夸克网盘目录' : '夸克网盘还没连接，先点「去连接 / 选目录」扫码';
+  btn.disabled = !!blocked;
+  btn.title = blocked;
+  if (t === 'quark') {
+    const ok = quarkReady();
+    $('planQuarkState').innerHTML = ok ? '<span class="hint ok">● 已连接，目录已选</span>'
+      : (state.quark && state.quark.loggedIn ? '<span class="hint warn">● 已连接，但没填目录</span>' : '<span class="hint err">● 未连接：点右侧按钮扫码</span>');
+  }
+}
+[...$('targetSeg').children].forEach((b) => { b.onclick = () => setTarget(b.dataset.t); });
+$('btnStart').onclick = () => startExport([...state.selected]);
 
 loadConfig();
 loadFiles();
