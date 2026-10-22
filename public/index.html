@@ -137,6 +137,19 @@
       <button class="ghost" id="btnPickDir">选择目录</button>
       <button id="btnSaveDir">保存</button>
     </div>
+    <div id="dirPick" style="display:none;margin-top:8px;background:#0c0e12;border:1px solid var(--line);border-radius:10px;padding:10px">
+      <div class="row">
+        <input type="text" id="dirPath" style="flex:1">
+        <button class="ghost" id="btnDirUp">上一级</button>
+        <button class="ghost" id="btnDirGo">进入</button>
+      </div>
+      <div class="list" style="max-height:28vh;margin-top:8px" id="dirList"></div>
+      <div class="row" style="margin-top:8px">
+        <span class="muted" id="dirMsg"></span>
+        <span class="spacer" style="flex:1"></span>
+        <button id="btnDirPick">选定此目录</button>
+      </div>
+    </div>
     <div class="row" style="margin-top:10px">
       <span class="muted" style="white-space:nowrap">手机访问</span>
       <span class="muted" id="lanAddr">-</span>
@@ -740,7 +753,10 @@ async function loadConfig() {
       $('lanAddr').textContent = url;
       $('lanAddr').dataset.url = url;
     } else {
-      $('lanAddr').textContent = '手机请用电脑局域网地址访问';
+      // 非本机访问（比如线上服务器）没有局域网可言，直接把当前这个地址给手机用
+      const url = location.origin + location.pathname + (TOKEN ? '?token=' + encodeURIComponent(TOKEN) : '');
+      $('lanAddr').textContent = url;
+      $('lanAddr').dataset.url = url;
     }
   } catch (e) { /* ignore */ }
 }
@@ -787,23 +803,72 @@ $('btnSaveDir').onclick = async () => {
   } catch (e) { $('msg').innerHTML = '<span class="err">' + e.message + '</span>'; }
 };
 
-$('btnPickDir').onclick = async () => {
+let dirNow = '';
+let dirParent = '';
+async function browseDirs(p) {
+  $('dirList').innerHTML = '<div class="muted" style="padding:8px">读取中…</div>';
   try {
-    $('msg').textContent = '已弹出目录选择框，请在电脑上选择…';
-    const r = await api('/api/pick-dir', { method: 'POST', body: '{}' });
-    $('saveDir').value = r.downloadRoot;
-    $('msg').innerHTML = '<span class="ok">已选择：' + r.downloadRoot + '</span>';
+    const r = await api('/api/dirs?path=' + encodeURIComponent(p || ''));
+    dirNow = r.path;
+    dirParent = r.parent;
+    $('dirPath').value = r.path;
+    $('btnDirUp').disabled = !r.parent;
+    const box = $('dirList');
+    box.innerHTML = '';
+    if (!r.dirs.length) box.innerHTML = '<div class="muted" style="padding:8px">这一层没有子目录</div>';
+    r.dirs.forEach((d) => {
+      const row = document.createElement('div');
+      row.className = 'qk-item';
+      row.innerHTML = `<span class="nm">📁 ${d.name.replace(/</g, '&lt;')}</span><span class="muted">进入 ›</span>`;
+      row.onclick = () => browseDirs(d.path);
+      box.appendChild(row);
+    });
+    $('dirMsg').textContent = r.parent ? '' : '已经是根目录';
+  } catch (e) {
+    $('dirList').innerHTML = '<div class="err" style="padding:8px">' + e.message + '</div>';
+  }
+}
+$('btnPickDir').onclick = () => {
+  $('dirPick').style.display = '';
+  browseDirs($('saveDir').value.trim());
+};
+$('btnDirUp').onclick = () => { if (dirParent) browseDirs(dirParent); };
+$('btnDirGo').onclick = () => browseDirs($('dirPath').value.trim());
+$('btnDirPick').onclick = async () => {
+  try {
+    await api('/api/config', { method: 'POST', body: JSON.stringify({ downloadRoot: dirNow }) });
+    $('saveDir').value = dirNow;
+    $('dirPick').style.display = 'none';
+    $('msg').innerHTML = '<span class="ok">下载目录已设为 ' + dirNow + '</span>';
     loadFiles();
   } catch (e) { $('msg').innerHTML = '<span class="err">' + e.message + '</span>'; }
 };
 
+function copyText(text) {
+  if (navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(text);
+  // 线上是 http 非安全上下文，navigator.clipboard 被浏览器直接禁用，只能退回选中文本
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.position = 'fixed';
+  ta.style.left = '-9999px';
+  document.body.appendChild(ta);
+  ta.focus();
+  ta.select();
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+  ta.remove();
+  return ok ? Promise.resolve() : Promise.reject(new Error('浏览器不允许自动复制'));
+}
+
 $('btnCopyLan').onclick = async () => {
-  const url = $('lanAddr').dataset.url;
-  if (!url) { $('msg').textContent = '当前是本机访问，手机请用电脑局域网 IP'; return; }
+  const url = $('lanAddr').dataset.url || '';
+  if (!url) { $('msg').textContent = '没有可复制的地址'; return; }
   try {
-    await navigator.clipboard.writeText(url);
-    $('msg').textContent = '手机访问地址已复制';
-  } catch (e) { $('msg').textContent = url; }
+    await copyText(url);
+    $('msg').textContent = '地址已复制，发到手机打开即可';
+  } catch (e) {
+    $('msg').textContent = '自动复制被浏览器拦了，请手动复制：' + url;
+  }
 };
 
 async function loadFiles() {

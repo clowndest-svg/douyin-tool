@@ -98,13 +98,15 @@ children.push(li('批量下载有账号限流/封禁风险，建议使用小号�
 children.push(h('八、保存目录'));
 children.push(li('默认保存到 D:\\视频 。'));
 children.push(li('每个博主一个文件夹，里面再按 图片 / 动态图 / 视频 三个子文件夹分类。'));
-children.push(li('页面可以直接输入路径，或点「选择目录」在电脑上选择。'));
+children.push(li('页面可以直接输入路径，也可以点「选择目录」在页面里逐层进入本机文件夹后选定（服务器上同样能用，不依赖系统弹窗）。'));
 children.push(li('下载完成后可以在「已下载文件」里预览或下载到手机。'));
 
 children.push(h('九、手机访问'));
 children.push(li('手机和电脑连接同一个 WiFi。'));
 children.push(li('页面「手机访问」一栏会显示地址，例如 http://192.168.1.10:3210/?token=xxxx 。'));
 children.push(li('点「复制地址」，发到手机浏览器打开；或直接安装本包内的「抖音下载器-独立版.apk」，在 App 里填同一个地址。'));
+children.push(li('用线上地址访问时，这一栏显示的就是线上地址本身（服务器没有局域网），手机直接扫/输这个地址即可。'));
+children.push(li('浏览器在非 HTTPS 页面会禁止脚本读剪贴板，工具会自动改用兼容方式复制；个别浏览器仍会拦，届时手动复制页面上显示的那行地址。'));
 children.push(li('token 保存在工具目录的 token.txt，修改后重启工具生效。'));
 children.push(li('手机页面可以控制下载、预览文件、把文件保存到手机。'));
 children.push(li('手机打不开：检查同一 WiFi、Windows 防火墙允许 node.exe、token 是否正确。'));

@@ -1052,27 +1052,34 @@ app.post('/api/config', (req, res) => {
   }
 });
 
-app.post('/api/pick-dir', (req, res) => {
-  const initial = getDownloadRoot().replace(/'/g, "''");
-  const ps = [
-    'Add-Type -AssemblyName System.Windows.Forms',
-    '$d = New-Object System.Windows.Forms.FolderBrowserDialog',
-    `$d.SelectedPath = '${initial}'`,
-    "if ($d.ShowDialog() -eq 'OK') { Write-Output $d.SelectedPath }",
-  ].join('; ');
-  execFile('powershell', ['-NoProfile', '-STA', '-Command', ps], { timeout: 120000 }, (err, stdout) => {
-    if (err) return res.status(500).json({ error: err.message });
-    const dir = String(stdout || '').trim();
-    if (!dir) return res.status(400).json({ error: '未选择目录' });
-    try {
-      fs.mkdirSync(dir, { recursive: true });
-      appConfig = { ...appConfig, downloadRoot: dir };
-      saveConfig(appConfig);
-      res.json({ ok: true, downloadRoot: dir });
-    } catch (e) {
-      res.status(500).json({ error: e.message });
+// 页面内浏览目录：不依赖任何系统的图形弹窗，Windows 和 Linux 服务器都能用
+const DIR_DENY = new Set(['proc', 'sys', 'dev', 'run', 'snap', 'system volume information']);
+
+app.get('/api/dirs', (req, res) => {
+  let p = String(req.query.path || '').trim() || getDownloadRoot();
+  if (!path.isAbsolute(p)) return res.status(400).json({ error: '请输入绝对路径' });
+  let cur = p;
+  while (cur && !fs.existsSync(cur)) {
+    const up = path.dirname(cur);
+    if (up === cur) break;
+    cur = up;
+  }
+  const top = cur.split(path.sep).filter(Boolean)[0];
+  if (top && DIR_DENY.has(top.toLowerCase())) return res.status(400).json({ error: '该目录不允许浏览' });
+  const dirs = [];
+  try {
+    for (const e of fs.readdirSync(cur, { withFileTypes: true })) {
+      if (e.name.startsWith('.')) continue;
+      if (e.isSymbolicLink()) continue;
+      if (!e.isDirectory()) continue;
+      dirs.push({ name: e.name, path: path.join(cur, e.name) });
     }
-  });
+  } catch (e) {
+    return res.status(400).json({ error: '这个目录读不了：' + e.message });
+  }
+  dirs.sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
+  const parent = path.dirname(cur);
+  res.json({ path: cur, parent: parent === cur ? '' : parent, dirs: dirs.slice(0, 500) });
 });
 
 const SKIP_DIRS = new Set(['douyin-tool', 'node_modules', 'profile', '.git', 'android']);
