@@ -721,11 +721,16 @@ function downloadFile(url, dest, onProgress) {
         received += chunk.length;
         if (onProgress) onProgress(received, total);
       });
-      const ws = fs.createWriteStream(dest);
+      const tmp = dest + '.part';
+      const ws = fs.createWriteStream(tmp);
       res.pipe(ws);
-      ws.on('finish', () => { ws.close(() => resolve()); });
-      ws.on('error', reject);
-      res.on('error', reject);
+      ws.on('finish', () => {
+        ws.close(() => {
+          fs.rename(tmp, dest, (err) => { if (err) reject(err); else resolve(); });
+        });
+      });
+      ws.on('error', (e) => { fs.unlink(tmp, () => {}); reject(e); });
+      res.on('error', (e) => { fs.unlink(tmp, () => {}); reject(e); });
     });
     req.on('error', reject);
     req.setTimeout(120000, () => req.destroy(new Error('下载超时')));
@@ -739,23 +744,37 @@ function guessImageExt(url) {
   return e === 'jpeg' ? '.jpg' : '.' + e;
 }
 
+const SUB_IMAGE = '图片';
+const SUB_LIVE = '动态图';
+const SUB_VIDEO = '视频';
+
+function subDirs(dir) {
+  return [dir, path.join(dir, SUB_IMAGE), path.join(dir, SUB_LIVE), path.join(dir, SUB_VIDEO)];
+}
+
 async function downloadItem(item, dir, onProgress, onFile) {
   const base = fileBase(item);
   const written = [];
   if (item.is_image && item.images.length) {
+    const imgDir = path.join(dir, SUB_IMAGE);
+    const liveDir = path.join(dir, SUB_LIVE);
+    fs.mkdirSync(imgDir, { recursive: true });
+    fs.mkdirSync(liveDir, { recursive: true });
     for (let i = 0; i < item.images.length; i++) {
       const img = item.images[i];
-      const p = path.join(dir, `${base}_${i + 1}${guessImageExt(img.url)}`);
+      const p = path.join(imgDir, `${base}_${i + 1}${guessImageExt(img.url)}`);
       await downloadFile(img.url, p, onProgress);
       written.push(p);
       if (img.video) {
-        const lp = path.join(dir, `${base}_${i + 1}_live.mp4`);
+        const lp = path.join(liveDir, `${base}_${i + 1}_live.mp4`);
         await downloadFile(img.video, lp, onProgress);
         written.push(lp);
       }
     }
   } else {
-    const p = path.join(dir, `${base}.mp4`);
+    const vidDir = path.join(dir, SUB_VIDEO);
+    fs.mkdirSync(vidDir, { recursive: true });
+    const p = path.join(vidDir, `${base}.mp4`);
     await downloadFile(item.play_url, p, onProgress);
     written.push(p);
   }
@@ -763,12 +782,31 @@ async function downloadItem(item, dir, onProgress, onFile) {
   return written;
 }
 
-function isDownloaded(base, dir) {
-  try {
-    return fs.readdirSync(dir).some(f => f.startsWith(base + '.') || f.startsWith(base + '_'));
-  } catch (e) {
-    return false;
+// 旧版本是平铺在一个目录里的，判定「已下载」时把老位置也算上，避免重复下一遍
+function findExisting(dir, base) {
+  const out = [];
+  for (const d of subDirs(dir)) {
+    let names;
+    try {
+      names = fs.readdirSync(d);
+    } catch (e) {
+      continue;
+    }
+    const prefix = d === dir ? '' : path.basename(d) + '/';
+    for (const f of names) {
+      if (f.startsWith(base + '.') || f.startsWith(base + '_')) out.push(prefix + f);
+    }
   }
+  return out;
+}
+
+// expectImages：这条作品应有几张图。半途中断留下的残包不算「已下载」，要能重下补齐
+function isDownloaded(base, dir, expectImages) {
+  const hits = findExisting(dir, base);
+  if (!hits.length) return false;
+  if (!expectImages) return true;
+  const imgs = hits.filter((h) => !/_live\.mp4$/i.test(h) && !/\.(mp4|m4v|mov)$/i.test(h.split('/').pop()));
+  return imgs.length >= expectImages;
 }
 
 async function withRetry(fn, retries) {
@@ -798,14 +836,12 @@ async function runDownload(items, opts) {
     downloadState.current = item.desc || item.aweme_id;
     downloadState.fileProgress = null;
     const base = fileBase(item);
-    if (isDownloaded(base, dir)) {
+    if (isDownloaded(base, dir, item.is_image ? item.images.length : 0)) {
       downloadState.skipped += 1;
       downloadState.done += 1;
-      try {
-        for (const f of fs.readdirSync(dir)) {
-          if (f.startsWith(base + '.') || f.startsWith(base + '_')) downloadState.produced.push(relToRoot(path.join(dir, f)));
-        }
-      } catch (e) { /* 目录不可读时跳过登记 */ }
+      for (const rel of findExisting(dir, base)) {
+        downloadState.produced.push(relToRoot(path.join(dir, ...rel.split('/'))));
+      }
       pushLog(`跳过已存在: ${base}`);
       continue;
     }
@@ -1405,7 +1441,7 @@ app.post('/api/user', async (req, res) => {
         comment_count: v.comment_count,
         has_url: !!v.play_url,
         share_url: v.share_url,
-        downloaded: isDownloaded(fileBase(v), dir),
+        downloaded: isDownloaded(fileBase(v), dir, v.is_image ? v.images.length : 0),
       })),
     });
   } catch (e) {

@@ -72,7 +72,7 @@
 <body>
 <div class="wrap">
   <h1>抖音博主视频下载器</h1>
-  <div class="sub" id="subLine">输入抖音号 → 抓取博主全部作品 → 勾选下载（保存到 D:\视频\博主昵称\）</div>
+  <div class="sub" id="subLine">输入抖音号 → 抓取博主全部作品 → 勾选下载（按 图片 / 动态图 / 视频 三个子文件夹保存）</div>
 
   <div class="panel">
     <div class="row" style="margin-top:10px">
@@ -1068,7 +1068,7 @@ function setTarget(t) {
   [...$('targetSeg').children].forEach(b => b.classList.toggle('on', b.dataset.t === t));
   const txt = t === 'phone'
     ? '勾选后点下载：文件先落在服务器/电脑，再由手机逐个拉回相册'
-    : (t === 'quark' ? '勾选后点下载：下完自动上传到上面的夸克网盘路径' : '输入抖音号 → 抓取作品 → 勾选下载到电脑下载目录');
+    : (t === 'quark' ? '勾选后点下载：下完自动上传到上面的夸克网盘路径' : '输入抖音号 → 抓取作品 → 勾选下载，按 图片 / 动态图 / 视频 三个子文件夹保存');
   $('subLine').textContent = txt;
 }
 [...$('targetSeg').children].forEach(b => { b.onclick = () => setTarget(b.dataset.t); });

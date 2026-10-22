@@ -73,7 +73,8 @@ children.push(li('输入抖音号（例如 36200424545），点「获取视频�
 children.push(li('列表包含：#、封面、标题、类型、发布时间、时长、点赞、评论、状态。'));
 children.push(li('类型说明：视频 / 图片×N / 动态图×N（Live Photo）/ 混合×N。'));
 children.push(li('勾选作品后点「下载所选」或「下载全部」。'));
-children.push(li('已下载的作品会显示「已下载」，重复下载会自动跳过。'));
+children.push(li('文件按类型分三个子文件夹存：博主昵称/图片（图集静态图）、博主昵称/动态图（Live Photo 的 mp4）、博主昵称/视频（普通视频）。'));
+children.push(li('已下载的作品会显示「已下载」，重复下载会自动跳过（旧版平铺存放的文件也能认出来，不会重复下一遍）。'));
 
 children.push(h('五、通用链接下载（YouTube / TikTok / X / 小红书）'));
 children.push(li('平台选择「通用链接」。'));
@@ -96,6 +97,7 @@ children.push(li('批量下载有账号限流/封禁风险，建议使用小号�
 
 children.push(h('八、保存目录'));
 children.push(li('默认保存到 D:\\视频 。'));
+children.push(li('每个博主一个文件夹，里面再按 图片 / 动态图 / 视频 三个子文件夹分类。'));
 children.push(li('页面可以直接输入路径，或点「选择目录」在电脑上选择。'));
 children.push(li('下载完成后可以在「已下载文件」里预览或下载到手机。'));
 
