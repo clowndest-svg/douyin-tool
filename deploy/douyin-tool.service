@@ -1,0 +1,18 @@
+[Unit]
+Description=Douyin Tool
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/douyin-tool
+ExecStart=/opt/node/bin/node server.js
+Environment=NODE_ENV=production
+Environment=HEADLESS=1
+Environment=PORT=3210
+Restart=always
+RestartSec=3
+MemoryMax=1024M
+CPUQuota=150%
+
+[Install]
+WantedBy=multi-user.target

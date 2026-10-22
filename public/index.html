@@ -1,0 +1,725 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>抖音博主视频下载器</title>
+<style>
+  :root { --bg:#0f1115; --panel:#171a21; --line:#262b36; --text:#e7e9ee; --muted:#8b93a7; --accent:#ff2d55; --ok:#2ecc71; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.6 "Microsoft YaHei", system-ui, sans-serif; }
+  .wrap { max-width:1180px; margin:0 auto; padding:24px; }
+  h1 { font-size:20px; margin:0 0 4px; }
+  .sub { color:var(--muted); font-size:13px; margin-bottom:20px; }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:16px; margin-bottom:16px; }
+  .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  input[type=text] { flex:1; min-width:220px; background:#0c0e12; border:1px solid var(--line); color:var(--text); border-radius:8px; padding:10px 12px; outline:none; }
+  input[type=text]:focus { border-color:var(--accent); }
+  button { background:var(--accent); color:#fff; border:0; border-radius:8px; padding:10px 16px; cursor:pointer; font-size:14px; }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  button.ghost { background:transparent; border:1px solid var(--line); color:var(--text); }
+  .status-dot { display:inline-block; width:8px; height:8px; border-radius:50%; background:#666; margin-right:6px; }
+  .status-dot.on { background:var(--ok); }
+  .user-card { display:flex; gap:16px; align-items:center; }
+  .avatar { width:64px; height:64px; border-radius:50%; background:#222; object-fit:cover; }
+  .user-meta { flex:1; }
+  .user-meta .name { font-size:18px; font-weight:600; }
+  .user-meta .id { color:var(--muted); font-size:13px; }
+  .stats { display:flex; gap:18px; margin-top:6px; color:var(--muted); font-size:13px; }
+  .stats b { color:var(--text); font-size:15px; }
+  .toolbar { display:flex; gap:10px; align-items:center; margin-bottom:10px; flex-wrap:wrap; }
+  .toolbar .spacer { flex:1; }
+  table { width:100%; border-collapse:collapse; }
+  th, td { text-align:left; padding:8px; border-bottom:1px solid var(--line); vertical-align:middle; }
+  th { color:var(--muted); font-weight:500; font-size:12px; position:sticky; top:0; background:var(--panel); }
+  .list { max-height:58vh; overflow:auto; border:1px solid var(--line); border-radius:10px; }
+  .thumb { width:88px; height:50px; object-fit:cover; border-radius:6px; background:#222; }
+  .title { max-width:560px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .muted { color:var(--muted); font-size:12px; }
+  .progress { height:10px; background:#0c0e12; border-radius:6px; overflow:hidden; margin:8px 0; }
+  .progress > i { display:block; height:100%; width:0; background:var(--accent); transition:width .3s; }
+  .log { background:#0c0e12; border:1px solid var(--line); border-radius:8px; padding:10px; height:140px; overflow:auto; font:12px/1.6 Consolas, monospace; color:#aab2c5; white-space:pre-wrap; }
+  .badge { display:inline-block; padding:1px 7px; border-radius:10px; font-size:11px; background:#2a2f3a; color:var(--muted); white-space:nowrap; }
+  .badge.video { background:#152a3d; color:#5aa9ff; }
+  .badge.live { background:#3a1a2a; color:#ff6b9d; }
+  .badge.mix { background:#33301a; color:#e6c84f; }
+  .badge.img { background:#2a2f3a; color:#9aa3b5; }
+  .err { color:#ff6b6b; }
+  .ok { color:var(--ok); }
+  .login-grid { display:grid; grid-template-columns:210px 1fr; gap:24px; margin-top:14px; border-top:1px solid var(--line); padding-top:16px; }
+  .qr-box { width:190px; height:190px; background:#fff; border-radius:10px; display:flex; align-items:center; justify-content:center; margin:8px 0; overflow:hidden; }
+  .qr-box img { width:182px; height:182px; object-fit:contain; }
+  .login-col .muted { margin-bottom:6px; }
+  .login-col input { width:100%; background:#0c0e12; border:1px solid var(--line); color:var(--text); border-radius:8px; padding:9px 11px; outline:none; margin-bottom:8px; }
+  .login-col input:focus { border-color:var(--accent); }
+  .tabs { display:flex; gap:8px; margin-bottom:10px; }
+  .tab { background:transparent; border:1px solid var(--line); color:var(--muted); padding:6px 12px; }
+  .tab.active { color:#fff; border-color:var(--accent); }
+  .login-col button { padding:8px 14px; }
+  @media (max-width:760px) { .login-grid { grid-template-columns:1fr; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>抖音博主视频下载器</h1>
+  <div class="sub">输入抖音号 → 抓取博主全部作品 → 勾选下载（保存到 D:\视频\博主昵称\）</div>
+
+  <div class="panel">
+    <div class="row" style="margin-top:10px">
+      <span><span id="dot" class="status-dot"></span><span id="loginText">检查登录状态…</span></span>
+      <span class="spacer" style="flex:1"></span>
+      <button class="ghost" id="btnLogin">打开登录窗口（备用）</button>
+    </div>
+    <div class="muted" id="platformLogin" style="margin-top:6px"></div>
+
+    <div id="loginPanel" class="login-grid" style="display:none">
+      <div class="login-col">
+        <div class="muted">扫码登录（用抖音 App 扫码）</div>
+        <div class="qr-box"><img id="qrImg" alt="加载中"></div>
+        <button class="ghost" id="btnRefreshQr">刷新二维码</button>
+      </div>
+      <div class="login-col">
+        <div class="tabs">
+          <button class="tab active" data-tab="sms">验证码登录</button>
+          <button class="tab" data-tab="pwd">密码登录</button>
+        </div>
+        <div id="smsForm">
+          <input id="phone" placeholder="手机号" inputmode="numeric" maxlength="11">
+          <div class="row" style="margin-bottom:8px">
+            <input id="code" placeholder="短信验证码" inputmode="numeric" maxlength="8" style="margin-bottom:0">
+            <button class="ghost" id="btnSendCode">获取验证码</button>
+          </div>
+          <button id="btnSmsLogin">登录</button>
+        </div>
+        <div id="pwdForm" style="display:none">
+          <input id="phone2" placeholder="手机号" inputmode="numeric" maxlength="11">
+          <input id="password" type="password" placeholder="密码">
+          <button id="btnPwdLogin">登录</button>
+        </div>
+        <div class="muted" id="loginMsg" style="margin-top:8px"></div>
+      </div>
+    </div>
+
+    <div class="row" style="margin-bottom:8px">
+      <select id="platform" style="background:#0c0e12;border:1px solid var(--line);color:var(--text);border-radius:8px;padding:9px 11px">
+        <option value="douyin">抖音主页（按抖音号）</option>
+        <option value="url">通用链接（YouTube / TikTok / X / 小红书等）</option>
+      </select>
+      <span class="muted" id="platformHint">主页批量，需先登录抖音</span>
+    </div>
+    <div class="row">
+      <input type="text" id="douyinId" placeholder="输入抖音号，例如 36200424545" value="">
+      <button id="btnFetch">获取视频</button>
+    </div>
+    <div id="msg" class="muted" style="margin-top:8px"></div>
+  </div>
+
+  <div class="panel">
+    <div class="row">
+      <span class="muted" style="white-space:nowrap">保存目录</span>
+      <input type="text" id="saveDir" placeholder="D:\视频" style="flex:1">
+      <button class="ghost" id="btnPickDir">选择目录</button>
+      <button id="btnSaveDir">保存</button>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <span class="muted" style="white-space:nowrap">手机访问</span>
+      <span class="muted" id="lanAddr">-</span>
+      <button class="ghost" id="btnCopyLan">复制地址</button>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <label class="muted" style="white-space:nowrap"><input type="checkbox" id="safeMode" checked> 安全模式（防封，推荐）</label>
+      <span class="muted" id="safeInfo"></span>
+      <span class="spacer" style="flex:1"></span>
+      <span class="muted">每日上限</span>
+      <input type="number" id="dailyLimit" min="1" value="200" style="width:90px;background:#0c0e12;border:1px solid var(--line);color:var(--text);border-radius:8px;padding:8px">
+    </div>
+    <div class="row" style="margin-top:6px">
+      <label class="muted"><input type="checkbox" id="useCookies" checked> 使用浏览器 cookies（TikTok / X / 小红书登录内容）</label>
+      <span class="spacer" style="flex:1"></span>
+      <span class="muted">清晰度</span>
+      <select id="quality" style="background:#0c0e12;border:1px solid var(--line);color:var(--text);border-radius:8px;padding:8px">
+        <option value="best">最佳</option>
+        <option value="2160">4K</option>
+        <option value="1080">1080p</option>
+        <option value="720">720p</option>
+        <option value="480">480p</option>
+        <option value="360">360p</option>
+        <option value="audio">仅音频</option>
+      </select>
+      <button class="ghost" id="btnUpdateYtdlp">更新 yt-dlp</button>
+    </div>
+  </div>
+
+  <div class="panel" id="userPanel" style="display:none">
+    <div class="user-card">
+      <img id="avatar" class="avatar" alt="">
+      <div class="user-meta">
+        <div class="name" id="nickname"></div>
+        <div class="id" id="uid"></div>
+        <div class="stats">
+          <span>粉丝 <b id="fans">-</b></span>
+          <span>获赞 <b id="likes">-</b></span>
+          <span>作品 <b id="awemeCount">-</b></span>
+        </div>
+        <div class="muted" id="signature" style="margin-top:4px"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel" id="listPanel" style="display:none">
+    <div class="toolbar">
+      <button class="ghost" id="btnAll">全选</button>
+      <button class="ghost" id="btnNone">取消全选</button>
+      <span class="muted" id="selInfo">已选 0 / 0</span>
+      <span class="muted" style="font-size:12px">单次最多 50 条，超出自动分批（批间冷却 20 秒）</span>
+      <span class="spacer"></span>
+      <button class="ghost" id="btnCsv">导出列表 CSV</button>
+      <button class="ghost" id="btnDownloadSel">下载所选</button>
+      <button id="btnDownloadAll">下载全部</button>
+    </div>
+    <div class="list">
+      <table>
+        <thead><tr>
+          <th style="width:34px">#</th>
+          <th style="width:32px"></th>
+          <th style="width:88px">封面</th>
+          <th>标题</th>
+          <th style="width:84px">类型</th>
+          <th style="width:96px">发布时间</th>
+          <th style="width:58px">时长</th>
+          <th style="width:58px">点赞</th>
+          <th style="width:58px">评论</th>
+          <th style="width:72px">状态</th>
+        </tr></thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="panel" id="dlPanel" style="display:none">
+    <div class="row"><b>下载进度</b><span class="spacer" style="flex:1"></span><span class="muted" id="dlInfo">-</span></div>
+    <div class="progress"><i id="bar"></i></div>
+    <div class="log" id="log"></div>
+  </div>
+
+  <div class="panel" id="filesPanel" style="display:none">
+    <div class="row">
+      <b>已下载文件</b>
+      <span class="spacer" style="flex:1"></span>
+      <span class="muted" id="filesDir"></span>
+      <button class="ghost" id="btnRefreshFiles">刷新</button>
+    </div>
+    <div class="list" style="max-height:42vh;margin-top:10px">
+      <table>
+        <thead><tr><th>文件名</th><th style="width:100px">大小</th><th style="width:130px">操作</th></tr></thead>
+        <tbody id="fileBody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const params = new URLSearchParams(location.search);
+if (params.get('token')) localStorage.setItem('dy_token', params.get('token'));
+const TOKEN = localStorage.getItem('dy_token') || '';
+let state = { user: null, videos: [], selected: new Set(), loggedIn: false, config: null, mode: 'douyin' };
+
+function withToken(url) {
+  if (!TOKEN) return url;
+  return url + (url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(TOKEN);
+}
+
+async function api(path, opts = {}) {
+  const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
+  if (TOKEN) headers['X-Token'] = TOKEN;
+  const res = await fetch(path, { ...opts, headers });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+  return data;
+}
+
+function fmtDate(ts) {
+  if (!ts) return '-';
+  const d = new Date(ts * 1000);
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+function fmtDur(ms) {
+  if (!ms) return '-';
+  const s = Math.round(ms / 1000);
+  return `${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`;
+}
+function fmtNum(n) {
+  if (n >= 10000) return (n/10000).toFixed(1) + 'w';
+  return String(n || 0);
+}
+
+let qrTimer = null;
+
+function setLoggedInUI(loggedIn) {
+  state.loggedIn = loggedIn;
+  $('dot').className = 'status-dot' + (loggedIn ? ' on' : '');
+  $('loginText').textContent = loggedIn ? '已登录抖音' : '未登录，请在下方扫码或验证码登录';
+  $('loginPanel').style.display = loggedIn ? 'none' : '';
+  if (loggedIn) {
+    if (qrTimer) { clearInterval(qrTimer); qrTimer = null; }
+  } else if (!qrTimer) {
+    loadQr();
+    qrTimer = setInterval(loadQr, 40000);
+  }
+}
+
+function loadQr() {
+  if (state.loggedIn) return;
+  $('qrImg').src = withToken('/api/login/qr?t=' + Date.now());
+}
+
+async function refreshLogin() {
+  try {
+    const r = await api('/api/login/status');
+    setLoggedInUI(r.loggedIn);
+    if (r.platforms) {
+      const parts = Object.values(r.platforms).map(p => `${p.name}：${p.loggedIn ? '已登录' : '未登录'}`);
+      $('platformLogin').textContent = '平台登录状态 — ' + parts.join(' · ');
+    }
+  } catch (e) {
+    $('loginText').textContent = '登录状态检查失败（服务可能未启动）';
+  }
+}
+
+$('btnLogin').onclick = async () => {
+  $('msg').textContent = '正在打开登录窗口，请在弹出的浏览器里扫码…';
+  try {
+    await api('/api/login', { method: 'POST', body: '{}' });
+    $('msg').textContent = '登录窗口已打开，请扫码；登录后点“获取视频”。';
+    setTimeout(refreshLogin, 3000);
+  } catch (e) { $('msg').innerHTML = '<span class="err">' + e.message + '</span>'; }
+};
+
+$('btnRefreshQr').onclick = async () => {
+  $('loginMsg').textContent = '正在刷新二维码…';
+  try {
+    await api('/api/login/refresh-qr', { method: 'POST', body: '{}' });
+    await new Promise(r => setTimeout(r, 800));
+    loadQr();
+    $('loginMsg').textContent = '';
+  } catch (e) { $('loginMsg').innerHTML = '<span class="err">' + e.message + '</span>'; }
+};
+
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.onclick = () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    const isSms = tab.dataset.tab === 'sms';
+    $('smsForm').style.display = isSms ? '' : 'none';
+    $('pwdForm').style.display = isSms ? 'none' : '';
+  };
+});
+
+let sendTimer = null;
+$('btnSendCode').onclick = async () => {
+  const phone = $('phone').value.trim();
+  if (!/^1\d{10}$/.test(phone)) { $('loginMsg').textContent = '请输入 11 位手机号'; return; }
+  $('btnSendCode').disabled = true;
+  $('loginMsg').textContent = '正在发送验证码…';
+  try {
+    await api('/api/login/sms/send', { method: 'POST', body: JSON.stringify({ phone }) });
+    $('loginMsg').textContent = '验证码已发送，请查看手机短信';
+    let n = 60;
+    sendTimer = setInterval(() => {
+      n -= 1;
+      $('btnSendCode').textContent = n > 0 ? `${n}s 后重发` : '获取验证码';
+      if (n <= 0) { clearInterval(sendTimer); sendTimer = null; $('btnSendCode').disabled = false; }
+    }, 1000);
+  } catch (e) {
+    $('loginMsg').innerHTML = '<span class="err">' + e.message + '</span>';
+    $('btnSendCode').disabled = false;
+  }
+};
+
+$('btnSmsLogin').onclick = async () => {
+  const phone = $('phone').value.trim();
+  const code = $('code').value.trim();
+  if (!/^1\d{10}$/.test(phone)) { $('loginMsg').textContent = '请输入 11 位手机号'; return; }
+  if (!/^\d{4,8}$/.test(code)) { $('loginMsg').textContent = '请输入短信验证码'; return; }
+  $('btnSmsLogin').disabled = true;
+  $('loginMsg').textContent = '正在登录…';
+  try {
+    const r = await api('/api/login/sms/submit', { method: 'POST', body: JSON.stringify({ phone, code }) });
+    if (r.loggedIn) { $('loginMsg').innerHTML = '<span class="ok">登录成功</span>'; setLoggedInUI(true); }
+    else { $('loginMsg').textContent = '登录未完成，请检查验证码或浏览器页面提示'; }
+  } catch (e) { $('loginMsg').innerHTML = '<span class="err">' + e.message + '</span>'; }
+  finally { $('btnSmsLogin').disabled = false; }
+};
+
+$('btnPwdLogin').onclick = async () => {
+  const phone = $('phone2').value.trim();
+  const password = $('password').value;
+  if (!/^1\d{10}$/.test(phone)) { $('loginMsg').textContent = '请输入 11 位手机号'; return; }
+  if (!password) { $('loginMsg').textContent = '请输入密码'; return; }
+  $('btnPwdLogin').disabled = true;
+  $('loginMsg').textContent = '正在登录…';
+  try {
+    const r = await api('/api/login/password', { method: 'POST', body: JSON.stringify({ phone, password }) });
+    if (r.loggedIn) { $('loginMsg').innerHTML = '<span class="ok">登录成功</span>'; setLoggedInUI(true); }
+    else { $('loginMsg').textContent = '登录未完成，请检查账号密码或浏览器页面提示'; }
+  } catch (e) { $('loginMsg').innerHTML = '<span class="err">' + e.message + '</span>'; }
+  finally { $('btnPwdLogin').disabled = false; }
+};
+
+$('platform').onchange = () => {
+  state.mode = $('platform').value;
+  if (state.mode === 'url') {
+    $('douyinId').placeholder = '粘贴作品或主页链接，例如 https://www.youtube.com/@频道';
+    $('platformHint').textContent = '支持 yt-dlp 的站点；主页链接会列出条目';
+  } else {
+    $('douyinId').placeholder = '输入抖音号，例如 36200424545';
+    $('platformHint').textContent = '主页批量，需先登录抖音';
+  }
+};
+
+$('btnFetch').onclick = async () => {
+  const input = $('douyinId').value.trim();
+  if (!input) {
+    $('msg').textContent = state.mode === 'url' ? '先粘贴链接' : '先输入抖音号';
+    return;
+  }
+  $('btnFetch').disabled = true;
+  $('msg').textContent = state.mode === 'url'
+    ? '正在解析链接（首次可能需要 10~60 秒）…'
+    : '正在搜索博主并抓取作品列表，首次可能需要 30~60 秒…';
+  try {
+    if (state.mode === 'url') {
+      const data = await api('/api/url/resolve', { method: 'POST', body: JSON.stringify({ url: input }) });
+      state.user = {
+        nickname: data.title || '通用下载',
+        douyin_id: input,
+        follower_count: 0,
+        total_favorited: 0,
+        aweme_count: data.entries.length,
+        signature: '来源：' + input,
+      };
+      state.videos = data.entries.map(e => ({
+        aweme_id: e.id,
+        desc: e.title,
+        create_time: 0,
+        duration: (e.duration || 0) * 1000,
+        cover: e.thumbnail,
+        is_image: false,
+        images: [],
+        digg_count: 0,
+        comment_count: 0,
+        share_url: e.url,
+        source_url: e.url,
+        has_url: true,
+      }));
+    } else {
+      const data = await api('/api/user', { method: 'POST', body: JSON.stringify({ douyinId: input }) });
+      state.user = data.user;
+      state.videos = data.videos;
+    }
+    state.selected = new Set(state.videos.map(v => v.aweme_id));
+    renderUser();
+    renderList();
+    $('userPanel').style.display = '';
+    $('listPanel').style.display = '';
+    $('dlPanel').style.display = '';
+    $('msg').innerHTML = `<span class="ok">已获取 ${state.videos.length} 条</span>`;
+    refreshStatus();
+  } catch (e) {
+    $('msg').innerHTML = '<span class="err">' + e.message + '</span>';
+  } finally {
+    $('btnFetch').disabled = false;
+  }
+};
+
+function renderUser() {
+  const u = state.user;
+  $('avatar').src = u.avatar || '';
+  $('nickname').textContent = u.nickname || '(无昵称)';
+  $('uid').textContent = '抖音号：' + (u.douyin_id || '-');
+  $('fans').textContent = fmtNum(u.follower_count);
+  $('likes').textContent = fmtNum(u.total_favorited);
+  $('awemeCount').textContent = u.aweme_count || state.videos.length;
+  $('signature').textContent = u.signature || '';
+}
+
+function renderList() {
+  const tb = $('tbody');
+  tb.innerHTML = '';
+  state.videos.forEach((v, idx) => {
+    let type = '视频';
+    let typeCls = 'video';
+    if (v.is_image) {
+      const total = v.image_count || (v.images ? v.images.length : 0) || 0;
+      const live = v.live_count || 0;
+      if (live > 0 && live >= total) {
+        type = `动态图 ×${total}`;
+        typeCls = 'live';
+      } else if (live > 0) {
+        type = `混合 ×${total}`;
+        typeCls = 'mix';
+      } else {
+        type = `图片 ×${total}`;
+        typeCls = 'img';
+      }
+    }
+    const status = v.downloaded
+      ? '<span class="ok">已下载</span>'
+      : '<span class="muted">未下载</span>';
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td class="muted">${idx + 1}</td>
+      <td><input type="checkbox" data-id="${v.aweme_id}" ${state.selected.has(v.aweme_id) ? 'checked' : ''}></td>
+      <td><img class="thumb" loading="lazy" src="${v.cover || ''}" alt=""></td>
+      <td><div class="title" title="${(v.desc || '').replace(/"/g, '&quot;')}">${v.desc || '(无标题)'}</div>
+          ${!v.has_url && !v.is_image ? '<span class="badge" style="color:#ff6b6b">无直链</span>' : ''}</td>
+      <td><span class="badge ${typeCls}">${type}</span></td>
+      <td class="muted">${fmtDate(v.create_time)}</td>
+      <td class="muted">${fmtDur(v.duration)}</td>
+      <td class="muted">${fmtNum(v.digg_count)}</td>
+      <td class="muted">${fmtNum(v.comment_count)}</td>
+      <td>${status}</td>`;
+    tb.appendChild(tr);
+  });
+  tb.querySelectorAll('input[type=checkbox]').forEach(cb => {
+    cb.onchange = () => {
+      if (cb.checked) state.selected.add(cb.dataset.id); else state.selected.delete(cb.dataset.id);
+      updateSelInfo();
+    };
+  });
+  updateSelInfo();
+}
+
+function updateSelInfo() {
+  $('selInfo').textContent = `已选 ${state.selected.size} / ${state.videos.length}`;
+}
+
+$('btnAll').onclick = () => { state.selected = new Set(state.videos.map(v => v.aweme_id)); renderList(); };
+$('btnNone').onclick = () => { state.selected = new Set(); renderList(); };
+
+function batchLimit() { return $('safeMode').checked ? 20 : 50; }
+function cooldownMs() { return $('safeMode').checked ? 60000 : 20000; }
+
+async function waitDownloadDone() {
+  for (;;) {
+    await new Promise(r => setTimeout(r, 1000));
+    const s = await api('/api/status');
+    if (!s.running) return s;
+  }
+}
+
+async function startDownload(ids) {
+  if (!ids.length) { alert('没有选中视频'); return; }
+  const maxBatch = batchLimit();
+  const batches = [];
+  for (let i = 0; i < ids.length; i += maxBatch) batches.push(ids.slice(i, i + maxBatch));
+  if (batches.length > 1) {
+    const ok = confirm(`共 ${ids.length} 条，将分 ${batches.length} 批下载（每批最多 ${maxBatch} 条，批间冷却 ${cooldownMs() / 1000} 秒）。继续？`);
+    if (!ok) return;
+  }
+  $('btnDownloadSel').disabled = true;
+  $('btnDownloadAll').disabled = true;
+  try {
+    for (let b = 0; b < batches.length; b++) {
+      $('msg').textContent = `正在下载第 ${b + 1}/${batches.length} 批（${batches[b].length} 条）…`;
+      if (state.mode === 'url') {
+        const urls = state.videos.filter(v => batches[b].includes(v.aweme_id)).map(v => v.source_url);
+        await api('/api/url/download', { method: 'POST', body: JSON.stringify({ urls, title: (state.user && state.user.nickname) || '通用下载', quality: $('quality').value }) });
+      } else {
+        await api('/api/download', { method: 'POST', body: JSON.stringify({ awemeIds: batches[b] }) });
+      }
+      $('dlPanel').scrollIntoView({ behavior: 'smooth' });
+      await waitDownloadDone();
+      if (b < batches.length - 1) {
+        $('msg').textContent = `第 ${b + 1} 批完成，冷却 ${cooldownMs() / 1000} 秒后继续…`;
+        await new Promise(r => setTimeout(r, cooldownMs()));
+      }
+    }
+    batches.flat().forEach(id => {
+      const v = state.videos.find(x => x.aweme_id === id);
+      if (v) v.downloaded = true;
+    });
+    renderList();
+    $('msg').innerHTML = '<span class="ok">全部批次下载完成</span>';
+  } catch (e) {
+    alert(e.message);
+  } finally {
+    $('btnDownloadSel').disabled = false;
+    $('btnDownloadAll').disabled = false;
+  }
+}
+$('btnDownloadSel').onclick = () => startDownload([...state.selected]);
+$('btnDownloadAll').onclick = () => startDownload(state.videos.map(v => v.aweme_id));
+
+let lastRunning = false;
+async function refreshStatus() {
+  try {
+    const s = await api('/api/status');
+    if (s.total) {
+      $('dlPanel').style.display = '';
+      const fp = s.fileProgress;
+      let progressText = '';
+      if (fp && fp.total) {
+        const pct = Math.round((fp.received / fp.total) * 100);
+        progressText = ` · 当前文件 ${pct}%（${(fp.received / 1048576).toFixed(1)}/${(fp.total / 1048576).toFixed(1)} MB）`;
+      } else if (fp && fp.received) {
+        progressText = ` · 当前文件 ${(fp.received / 1048576).toFixed(1)} MB`;
+      }
+      $('dlInfo').textContent = `${s.done + s.failed} / ${s.total}（成功 ${s.done - (s.skipped || 0)}，跳过 ${s.skipped || 0}，失败 ${s.failed}）${s.running ? ' 下载中…' : ' 已结束'}${progressText}`;
+      $('bar').style.width = Math.round(((s.done + s.failed) / s.total) * 100) + '%';
+      $('log').textContent = (s.log || []).join('\n');
+      $('log').scrollTop = $('log').scrollHeight;
+      if (s.running) {
+        lastRunning = true;
+        setTimeout(refreshStatus, 1000);
+      } else if (lastRunning) {
+        lastRunning = false;
+        loadFiles();
+      }
+    }
+  } catch (e) { /* ignore */ }
+}
+
+async function loadConfig() {
+  try {
+    const c = await api('/api/config');
+    state.config = c;
+    $('saveDir').value = c.downloadRoot || '';
+    $('safeMode').checked = c.safeMode !== false;
+    $('dailyLimit').value = c.dailyLimit || 200;
+    $('useCookies').checked = c.useCookies !== false;
+    $('quality').value = c.quality || 'best';
+    updateSafeInfo();
+    if (c.isLocal && c.lan && c.lan.length) {
+      const url = `http://${c.lan[0]}:${c.port}/?token=${c.token}`;
+      $('lanAddr').textContent = url;
+      $('lanAddr').dataset.url = url;
+    } else {
+      $('lanAddr').textContent = '手机请用电脑局域网地址访问';
+    }
+  } catch (e) { /* ignore */ }
+}
+
+function updateSafeInfo() {
+  const on = $('safeMode').checked;
+  if (on) {
+    const used = (state.config && state.config.todayCount) || 0;
+    const limit = Number($('dailyLimit').value) || 200;
+    $('safeInfo').textContent = `单批 20 条 · 每条 3~8 秒 · 批间 60 秒 · 今日已下 ${used}/${limit}`;
+  } else {
+    $('safeInfo').textContent = '普通模式：单批 50 条 · 每条 1.5~4 秒，风险自担';
+  }
+}
+
+async function saveSafeConfig() {
+  try {
+    const r = await api('/api/config', {
+      method: 'POST',
+      body: JSON.stringify({
+        safeMode: $('safeMode').checked,
+        dailyLimit: Number($('dailyLimit').value) || 200,
+        useCookies: $('useCookies').checked,
+        quality: $('quality').value,
+      }),
+    });
+    state.config = { ...(state.config || {}), ...r };
+    updateSafeInfo();
+  } catch (e) {
+    $('msg').innerHTML = '<span class="err">' + e.message + '</span>';
+  }
+}
+$('safeMode').onchange = saveSafeConfig;
+$('dailyLimit').onchange = saveSafeConfig;
+$('useCookies').onchange = saveSafeConfig;
+$('quality').onchange = saveSafeConfig;
+
+$('btnSaveDir').onclick = async () => {
+  try {
+    const r = await api('/api/config', { method: 'POST', body: JSON.stringify({ downloadRoot: $('saveDir').value.trim() }) });
+    $('saveDir').value = r.downloadRoot;
+    $('msg').innerHTML = '<span class="ok">保存目录已更新：' + r.downloadRoot + '</span>';
+    loadFiles();
+  } catch (e) { $('msg').innerHTML = '<span class="err">' + e.message + '</span>'; }
+};
+
+$('btnPickDir').onclick = async () => {
+  try {
+    $('msg').textContent = '已弹出目录选择框，请在电脑上选择…';
+    const r = await api('/api/pick-dir', { method: 'POST', body: '{}' });
+    $('saveDir').value = r.downloadRoot;
+    $('msg').innerHTML = '<span class="ok">已选择：' + r.downloadRoot + '</span>';
+    loadFiles();
+  } catch (e) { $('msg').innerHTML = '<span class="err">' + e.message + '</span>'; }
+};
+
+$('btnCopyLan').onclick = async () => {
+  const url = $('lanAddr').dataset.url;
+  if (!url) { $('msg').textContent = '当前是本机访问，手机请用电脑局域网 IP'; return; }
+  try {
+    await navigator.clipboard.writeText(url);
+    $('msg').textContent = '手机访问地址已复制';
+  } catch (e) { $('msg').textContent = url; }
+};
+
+async function loadFiles() {
+  try {
+    const r = await api('/api/files');
+    $('filesPanel').style.display = '';
+    $('filesDir').textContent = r.dir;
+    const tb = $('fileBody');
+    tb.innerHTML = '';
+    if (!r.files.length) {
+      tb.innerHTML = '<tr><td colspan="3" class="muted">目录里还没有文件</td></tr>';
+      return;
+    }
+    r.files.slice(0, 300).forEach(f => {
+      const tr = document.createElement('tr');
+      const size = f.size > 1048576 ? (f.size / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(f.size / 1024)) + ' KB';
+      const name = f.name.replace(/"/g, '&quot;');
+      tr.innerHTML = `<td class="title" title="${name}">${name}</td><td class="muted">${size}</td><td><a class="muted" href="${withToken('/api/files/stream?name=' + encodeURIComponent(f.name))}" target="_blank">预览</a> <a class="muted" href="${withToken('/api/files/download?name=' + encodeURIComponent(f.name))}" download>下载</a></td>`;
+      tb.appendChild(tr);
+    });
+  } catch (e) { /* ignore */ }
+}
+$('btnRefreshFiles').onclick = loadFiles;
+
+$('btnUpdateYtdlp').onclick = async () => {
+  $('msg').textContent = '正在更新 yt-dlp…';
+  try {
+    await api('/api/ytdlp/update', { method: 'POST', body: '{}' });
+    $('msg').innerHTML = '<span class="ok">yt-dlp 已更新到最新版</span>';
+  } catch (e) {
+    $('msg').innerHTML = '<span class="err">' + e.message + '</span>';
+  }
+};
+
+$('btnCsv').onclick = () => {
+  if (!state.videos.length) return;
+  const rows = [['aweme_id', '标题', '发布时间', '时长(秒)', '点赞', '评论', '链接']];
+  state.videos.forEach(v => rows.push([
+    v.aweme_id,
+    (v.desc || '').replace(/\r?\n/g, ' '),
+    fmtDate(v.create_time),
+    Math.round((v.duration || 0) / 1000),
+    v.digg_count,
+    v.comment_count,
+    v.share_url || '',
+  ]));
+  const csv = '\ufeff' + rows.map(r => r.map(x => `"${String(x == null ? '' : x).replace(/"/g, '""')}"`).join(',')).join('\r\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `douyin_${(state.user && state.user.douyin_id) || 'list'}.csv`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 3000);
+};
+
+loadConfig();
+loadFiles();
+
+refreshLogin();
+setInterval(refreshLogin, 2000);
+</script>
+</body>
+</html>
