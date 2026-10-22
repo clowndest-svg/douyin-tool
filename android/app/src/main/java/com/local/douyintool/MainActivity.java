@@ -6,19 +6,23 @@ import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Environment;
 import android.view.KeyEvent;
+import android.view.View;
 import android.view.ViewGroup;
 import android.webkit.CookieManager;
 import android.webkit.URLUtil;
+import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.Button;
+import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.TextView;
@@ -33,12 +37,19 @@ public class MainActivity extends Activity {
     private WebView webView;
     private EditText urlInput;
     private TextView statusText;
+    private LinearLayout sniffBar;
+    private CheckBox onlineModeBox;
+    private SharedPreferences prefs;
+
     private final Set<String> mediaUrls = new LinkedHashSet<>();
     private static final Pattern URL_PATTERN = Pattern.compile("https?://[^\\s，。；]+");
+    private static final String DEFAULT_ONLINE = "http://124.220.54.64:3210/?token=61f4c5b6";
+    private static final String DEFAULT_INDEPENDENT = "https://www.douyin.com/";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        prefs = getSharedPreferences("douyin_tool", Context.MODE_PRIVATE);
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
@@ -47,9 +58,14 @@ public class MainActivity extends Activity {
         bar.setOrientation(LinearLayout.HORIZONTAL);
         bar.setPadding(10, 10, 10, 6);
 
+        onlineModeBox = new CheckBox(this);
+        onlineModeBox.setText("在线");
+        onlineModeBox.setChecked(prefs.getBoolean("online", true));
+        bar.addView(onlineModeBox);
+
         urlInput = new EditText(this);
         urlInput.setSingleLine(true);
-        urlInput.setHint("粘贴作品/主页链接，或从抖音分享进来");
+        urlInput.setHint("服务器地址或作品链接");
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1);
         bar.addView(urlInput, lp);
 
@@ -65,19 +81,19 @@ public class MainActivity extends Activity {
 
         root.addView(bar);
 
-        LinearLayout statusBar = new LinearLayout(this);
-        statusBar.setOrientation(LinearLayout.HORIZONTAL);
-        statusBar.setPadding(12, 4, 12, 4);
+        sniffBar = new LinearLayout(this);
+        sniffBar.setOrientation(LinearLayout.HORIZONTAL);
+        sniffBar.setPadding(12, 4, 12, 4);
 
         statusText = new TextView(this);
         statusText.setText("捕获 0 个媒体（播放/滚动后自动捕获）");
         LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1);
-        statusBar.addView(statusText, slp);
+        sniffBar.addView(statusText, slp);
 
         Button downloadAll = new Button(this);
         downloadAll.setText("下载全部");
         downloadAll.setOnClickListener(v -> downloadAll());
-        statusBar.addView(downloadAll);
+        sniffBar.addView(downloadAll);
 
         Button clear = new Button(this);
         clear.setText("清空");
@@ -87,9 +103,9 @@ public class MainActivity extends Activity {
             }
             updateStatus();
         });
-        statusBar.addView(clear);
+        sniffBar.addView(clear);
 
-        root.addView(statusBar);
+        root.addView(sniffBar);
 
         webView = new WebView(this);
         WebSettings s = webView.getSettings();
@@ -103,28 +119,67 @@ public class MainActivity extends Activity {
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
-                captureUrl(request.getUrl().toString());
+                if (!onlineModeBox.isChecked()) {
+                    String scheme = request.getUrl().getScheme();
+                    if (scheme == null || (!scheme.equalsIgnoreCase("http") && !scheme.equalsIgnoreCase("https"))) {
+                        return super.shouldInterceptRequest(view, request);
+                    }
+                    captureUrl(request.getUrl().toString());
+                }
                 return super.shouldInterceptRequest(view, request);
             }
 
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
-                view.loadUrl(request.getUrl().toString());
+                Uri uri = request.getUrl();
+                String scheme = uri.getScheme() == null ? "" : uri.getScheme().toLowerCase();
+                if (scheme.equals("http") || scheme.equals("https")) {
+                    return false;
+                }
                 return true;
+            }
+
+            @Override
+            public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
+                if (request.isForMainFrame() && error != null) {
+                    // 主框架错误保留系统提示；子资源错误忽略
+                }
             }
         });
 
         webView.setDownloadListener((url, userAgent, contentDisposition, mimetype, contentLength) -> {
-            captureUrl(url);
+            if (url != null && (url.startsWith("http://") || url.startsWith("https://"))) {
+                downloadFile(url, userAgent);
+            } else {
+                Toast.makeText(this, "不支持的下载链接", Toast.LENGTH_SHORT).show();
+            }
         });
 
         root.addView(webView, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
         setContentView(root);
 
+        onlineModeBox.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            prefs.edit().putBoolean("online", isChecked).apply();
+            updateModeUI();
+            String target = isChecked ? DEFAULT_ONLINE : DEFAULT_INDEPENDENT;
+            urlInput.setText(target);
+            webView.loadUrl(target);
+        });
+
+        String saved = prefs.getString("url", onlineModeBox.isChecked() ? DEFAULT_ONLINE : DEFAULT_INDEPENDENT);
+        urlInput.setText(saved);
+        updateModeUI();
+
         handleIntent(getIntent());
         if (webView.getUrl() == null) {
-            webView.loadUrl("https://www.douyin.com/");
+            webView.loadUrl(saved);
         }
+    }
+
+    private void updateModeUI() {
+        boolean online = onlineModeBox.isChecked();
+        sniffBar.setVisibility(online ? View.GONE : View.VISIBLE);
+        urlInput.setHint(online ? "服务器地址（含 token）" : "作品/主页链接");
     }
 
     private void handleIntent(Intent intent) {
@@ -161,12 +216,13 @@ public class MainActivity extends Activity {
     private void openInput() {
         String url = urlInput.getText().toString().trim();
         if (url.isEmpty()) {
-            Toast.makeText(this, "请输入链接", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "请输入地址或链接", Toast.LENGTH_SHORT).show();
             return;
         }
         if (!url.startsWith("http://") && !url.startsWith("https://")) {
             url = "https://" + url;
         }
+        prefs.edit().putString("url", url).apply();
         webView.loadUrl(url);
     }
 
@@ -199,31 +255,32 @@ public class MainActivity extends Activity {
             Toast.makeText(this, "还没捕获到媒体，先播放或滚动页面", Toast.LENGTH_SHORT).show();
             return;
         }
-        DownloadManager dm = (DownloadManager) getSystemService(Context.DOWNLOAD_SERVICE);
-        String ua = webView.getSettings().getUserAgentString();
-        int count = 0;
         for (String url : urls) {
-            try {
-                DownloadManager.Request req = new DownloadManager.Request(Uri.parse(url));
-                req.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
-                String lower = url.toLowerCase();
-                if (lower.contains("douyin")) {
-                    req.addRequestHeader("Referer", "https://www.douyin.com/");
-                } else if (lower.contains("xiaohongshu") || lower.contains("xhscdn")) {
-                    req.addRequestHeader("Referer", "https://www.xiaohongshu.com/");
-                } else if (lower.contains("tiktok") || lower.contains("tiktokcdn")) {
-                    req.addRequestHeader("Referer", "https://www.tiktok.com/");
-                }
-                req.addRequestHeader("User-Agent", ua);
-                String fileName = URLUtil.guessFileName(url, null, null);
-                req.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName);
-                dm.enqueue(req);
-                count++;
-            } catch (Exception e) {
-                // skip bad url
-            }
+            downloadFile(url, webView.getSettings().getUserAgentString());
         }
-        Toast.makeText(this, "已开始下载 " + count + " 个文件到手机 Downloads", Toast.LENGTH_LONG).show();
+        Toast.makeText(this, "已开始下载 " + urls.size() + " 个文件到手机 Downloads", Toast.LENGTH_LONG).show();
+    }
+
+    private void downloadFile(String url, String ua) {
+        try {
+            DownloadManager.Request req = new DownloadManager.Request(Uri.parse(url));
+            req.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+            String lower = url.toLowerCase();
+            if (lower.contains("douyin")) {
+                req.addRequestHeader("Referer", "https://www.douyin.com/");
+            } else if (lower.contains("xiaohongshu") || lower.contains("xhscdn")) {
+                req.addRequestHeader("Referer", "https://www.xiaohongshu.com/");
+            } else if (lower.contains("tiktok") || lower.contains("tiktokcdn")) {
+                req.addRequestHeader("Referer", "https://www.tiktok.com/");
+            }
+            if (ua != null) req.addRequestHeader("User-Agent", ua);
+            String fileName = URLUtil.guessFileName(url, null, null);
+            req.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName);
+            DownloadManager dm = (DownloadManager) getSystemService(Context.DOWNLOAD_SERVICE);
+            dm.enqueue(req);
+        } catch (Exception e) {
+            Toast.makeText(this, "下载失败: " + e.getMessage(), Toast.LENGTH_LONG).show();
+        }
     }
 
     @Override
