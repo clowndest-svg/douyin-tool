@@ -322,13 +322,21 @@ function fmtNum(n) {
 
 let qrTimer = null;
 
-function setLoggedInUI(loggedIn) {
+function setLoggedInUI(loggedIn, sleeping) {
   state.loggedIn = loggedIn;
   $('dot').className = 'status-dot' + (loggedIn ? ' on' : '');
-  $('loginText').textContent = loggedIn ? '已登录抖音' : '未登录，请在下方扫码或验证码登录';
-  $('loginPanel').style.display = loggedIn ? 'none' : '';
   if (loggedIn) {
+    $('loginText').textContent = '已登录抖音';
+  } else if (sleeping) {
+    $('loginText').textContent = '后台浏览器休眠中（点「获取视频」或「打开登录窗口」会自动唤醒）';
+  } else {
+    $('loginText').textContent = '未登录，请在下方扫码或验证码登录';
+  }
+  $('loginPanel').style.display = loggedIn ? 'none' : '';
+  if (loggedIn || sleeping) {
+    // 休眠时不去自动取二维码：那会把刚释放的浏览器又唤醒，空闲回收就白做了
     if (qrTimer) { clearInterval(qrTimer); qrTimer = null; }
+    if (sleeping && !loggedIn) $('qrErr').textContent = '浏览器休眠中，点「刷新二维码」即可唤醒并取码';
   } else if (!qrTimer) {
     loadQr();
     qrTimer = setInterval(loadQr, 40000);
@@ -363,10 +371,12 @@ function loadQr() {
 async function refreshLogin() {
   try {
     const r = await api('/api/login/status');
-    setLoggedInUI(r.loggedIn);
-    if (r.platforms) {
+    setLoggedInUI(r.loggedIn, r.sleeping);
+    if (r.platforms && Object.keys(r.platforms).length) {
       const parts = Object.values(r.platforms).map(p => `${p.name}：${p.loggedIn ? '已登录' : '未登录'}`);
       $('platformLogin').textContent = '平台登录状态 — ' + parts.join(' · ');
+    } else if (r.sleeping) {
+      $('platformLogin').textContent = '平台登录状态 — 浏览器休眠中，唤醒后再读';
     }
   } catch (e) {
     $('loginText').textContent = '登录状态检查失败（服务可能未启动）';

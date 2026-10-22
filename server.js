@@ -1302,7 +1302,10 @@ app.post('/api/login', async (req, res) => {
 
 app.get('/api/login/status', async (req, res) => {
   try {
-    if (!context) return res.json({ loggedIn: false, cookieCount: 0, browserOpen: false, platforms: {} });
+    if (!context) return res.json({
+      loggedIn: false, cookieCount: 0, browserOpen: false, sleeping: true, platforms: {},
+      note: '后台浏览器已休眠，做任何操作时会自动唤醒',
+    });
     const login = await checkLogin();
     const platforms = await platformLoginStatus();
     res.json({ ...login, platforms });
