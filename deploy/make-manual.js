@@ -37,7 +37,7 @@ children.push(new Paragraph({
 children.push(new Paragraph({
   alignment: AlignmentType.CENTER,
   spacing: { after: 320 },
-  children: [new TextRun({ text: '使用说明  ·  版本 1.3  ·  2026-10-22', font: FONT, size: 20, color: '666666' })],
+  children: [new TextRun({ text: '使用说明  ·  版本 1.6  ·  2026-10-22', font: FONT, size: 20, color: '666666' })],
 }));
 
 children.push(h('一、这是什么'));
@@ -46,6 +46,8 @@ children.push(li('抖音主页批量下载（按抖音号）'));
 children.push(li('通用链接下载：YouTube、TikTok、X（Twitter）、小红书等 yt-dlp 支持的站点'));
 children.push(li('视频、图集、Live Photo 动态照片'));
 children.push(li('清晰度选择、安全模式、手机访问、文件预览'));
+children.push(li('下载去向三选一：存电脑、存手机相册（App）、传夸克网盘（可指定网盘目录）'));
+children.push(li('勾选文件打包成 zip，一次上传到网盘指定位置'));
 children.push(text('所有数据保存在你自己的电脑上，工具不会上传账号信息。'));
 
 children.push(h('二、解压与启动'));
@@ -96,18 +98,37 @@ children.push(li('下载完成后可以在「已下载文件」里预览或下�
 children.push(h('九、手机访问'));
 children.push(li('手机和电脑连接同一个 WiFi。'));
 children.push(li('页面「手机访问」一栏会显示地址，例如 http://192.168.1.10:3210/?token=xxxx 。'));
-children.push(li('点「复制地址」，发到手机浏览器打开。'));
+children.push(li('点「复制地址」，发到手机浏览器打开；或直接安装本包内的「抖音下载器-独立版.apk」，在 App 里填同一个地址。'));
 children.push(li('token 保存在工具目录的 token.txt，修改后重启工具生效。'));
-children.push(li('手机页面可以控制下载、预览文件、把文件下载到手机。'));
+children.push(li('手机页面可以控制下载、预览文件、把文件保存到手机。'));
 children.push(li('手机打不开：检查同一 WiFi、Windows 防火墙允许 node.exe、token 是否正确。'));
 
-children.push(h('十、其他功能'));
-children.push(li('文件列表：视频/图片在线预览、下载到手机。'));
+children.push(h('十、保存到：电脑 / 手机相册 / 夸克网盘'));
+children.push(li('作品列表上方多了「保存到」三选一，决定这一批下载完成后文件去哪里。'));
+children.push(li('电脑：和以前一样，存到电脑上设置的下载目录（默认 D:\\视频）。'));
+children.push(li('手机相册：电脑先把文件下好，再由手机逐个拉回。用 App 打开的会直接写进相册——视频进 DCIM/抖音下载器，图片进 Pictures/抖音下载器，相册里能直接看到；用手机浏览器打开的只能落在浏览器下载目录（浏览器权限限制，App 才能进相册）。'));
+children.push(li('夸克网盘：电脑下完后自动上传到你指定的网盘目录，详见下一章。'));
+children.push(li('选「夸克网盘」但还没连接时，工具会先弹提示，不会假装上传成功。'));
+
+children.push(h('十一、连接夸克网盘与打包上传'));
+children.push(li('页面「夸克网盘」面板点开展开设置，状态会如实显示「已连接」或「未连接」。'));
+children.push(li('连接方式一（推荐，本机版）：点「打开夸克登录页」，在弹出的浏览器窗口里正常登录夸克网盘，回到工具点「从浏览器导入」。'));
+children.push(li('连接方式二（任何环境都能用）：自己在电脑浏览器登录 pan.quark.cn → 按 F12 → Network → 找一条 drive-pc.quark.cn 的请求 → 复制请求头里整串 Cookie → 粘贴到工具里点「保存并测试 Cookie」。'));
+children.push(li('Cookie 保存前工具会先向夸克校验，校验不过不会保存，界面会显示原因（例如 Cookie 已失效）。'));
+children.push(li('指定网盘路径：直接输入例如 /影视/抖音，或点「浏览目录」一层层进入后「选定当前目录」，需要时可在里面新建文件夹。'));
+children.push(li('下载时选「夸克网盘」→ 下载完成后自动上传到「该路径/博主昵称」下，进度和结果写在面板的「上传进度」日志里。'));
+children.push(li('打包成压缩包：在「已下载文件」勾选若干文件 → 点「打包成压缩包」→ 生成在 下载目录/_压缩包/ 下；再勾选这个 zip 点「上传所选到夸克网盘」即可一次传一个整包。'));
+children.push(li('上传走夸克官方网页同一套接口，超过 4MB 自动分片；云端已有完全相同文件时会被秒传，日志会标注。'));
+children.push(li('Cookie 只保存在本机 config.json（便携包解压目录内），不会随工具发给别人；换电脑需重新粘贴。'));
+children.push(li('注意：这是夸克网页版使用的接口，官方没有公开文档，若夸克改版可能失效；届时工具会把失败原因显示在日志里，文件仍安全留在电脑。'));
+
+children.push(h('十二、其他功能'));
+children.push(li('文件列表：视频/图片在线预览、下载到手机、勾选打包。'));
 children.push(li('导出列表 CSV：方便做表格。'));
 children.push(li('一键更新 yt-dlp。'));
 children.push(li('跳过已下载、失败自动重试、下载字节进度。'));
 
-children.push(h('十一、常见问题'));
+children.push(h('十三、常见问题'));
 children.push(text('Q1：页面打不开？', { bold: true }));
 children.push(text('双击「启动工具.bat」；检查 3210 端口是否被占用；看命令行窗口的报错。'));
 children.push(text('Q2：登录失败？', { bold: true }));
@@ -124,11 +145,17 @@ children.push(text('Q7：杀毒软件报毒？', { bold: true }));
 children.push(text('工具未做签名，纯本地运行；可以添加信任，或检查源码后再用。'));
 children.push(text('Q8：会不会封号？', { bold: true }));
 children.push(text('批量下载有风险。建议用小号、开启安全模式、控制数量；工具不能保证不封号。'));
+children.push(text('Q9：夸克网盘显示未连接 / 上传失败？', { bold: true }));
+children.push(text('先看面板日志的具体原因。常见三种：Cookie 过期（重新登录再粘贴一次）、路径写成了网盘里不存在的目录（工具会自动创建，但名字里有特殊字符时建议换个名）、夸克侧风控或空间不足。上传失败时文件仍在电脑下载目录里，不会丢。'));
+children.push(text('Q10：手机上相册里找不到下载的文件？', { bold: true }));
+children.push(text('用 App 打开的会进 DCIM/抖音下载器（视频）和 Pictures/抖音下载器（图片），相册一般立刻能看到，个别手机要等媒体库扫描或重启相册；用手机浏览器打开的落在浏览器下载目录，需要相册 App 里手动找「下载」分类。压缩包（zip）不属于照片，会落在下载目录。'));
 
-children.push(h('十二、免责声明'));
+children.push(h('十四、免责声明'));
 children.push(text('本工具仅用于个人学习、备份已公开内容。请遵守抖音及各平台的用户协议，不要用于商业用途、二次传播、绕过付费或私密内容。批量下载可能导致账号限流或封禁，风险由使用者承担。工具不收集、不上传任何账号信息，cookies 仅保存在本机。'));
 
 children.push(h('版本记录'));
+children.push(li('1.6：夸克网盘连接/指定路径上传/打包 zip 上传；下载去向电脑·手机相册·网盘三选一；App 直接写相册（不再依赖系统下载服务）。'));
+children.push(li('1.4~1.5：App 双模式（在线 = 网页功能一致）、修复 bytedance 协议跳转、应用图标。'));
 children.push(li('1.3：清晰度选择、cookies、1080p/4K 合并、多平台、安全模式、手机访问、独立 APK。'));
 children.push(li('1.2：列表增加类型/评论/状态列。'));
 children.push(li('1.1：独立版 APK（媒体嗅探）。'));
@@ -147,9 +174,10 @@ children.push(li('1.1：独立版 APK（媒体嗅探）。'));
     '2. 双击「启动工具.bat」',
     '3. 浏览器打开 http://127.0.0.1:3210',
     '4. 在页面内登录抖音（扫码或验证码）',
-    '5. 输入抖音号 → 获取视频 → 勾选 → 下载',
+    '5. 输入抖音号 → 获取视频 → 勾选 → 选「保存到」→ 下载',
+    '6. 想传夸克网盘：在「夸克网盘」面板连接一次，之后下载会自动上传到指定网盘目录',
     '',
-    '手机访问：http://电脑IP:3210/?token=见 token.txt',
+    '手机访问：http://电脑IP:3210/?token=见 token.txt（或直接装「抖音下载器-独立版.apk」）',
     '详细说明见「使用说明.docx」',
     '',
     '提示：批量下载有封号风险，建议用小号并保持安全模式开启。',

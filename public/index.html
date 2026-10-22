@@ -56,13 +56,23 @@
   .tab { background:transparent; border:1px solid var(--line); color:var(--muted); padding:6px 12px; }
   .tab.active { color:#fff; border-color:var(--accent); }
   .login-col button { padding:8px 14px; }
+  .seg { display:inline-flex; border:1px solid var(--line); border-radius:9px; overflow:hidden; }
+  .seg button { background:transparent; color:var(--muted); border-radius:0; padding:7px 12px; font-size:13px; border:0; }
+  .seg button.on { background:var(--accent); color:#fff; }
+  textarea.cookie { width:100%; height:74px; background:#0c0e12; border:1px solid var(--line); color:var(--text); border-radius:8px; padding:9px 11px; outline:none; font:12px/1.5 Consolas, monospace; resize:vertical; margin:6px 0; }
+  .fold { width:100%; text-align:left; background:transparent; border:1px solid var(--line); color:var(--text); border-radius:8px; padding:7px 12px; font-size:13px; }
+  .fold.on { border-color:var(--accent); }
+  .qk-item { display:flex; gap:10px; align-items:center; padding:6px 8px; border-bottom:1px solid var(--line); }
+  .qk-item:hover { background:#0c0e12; }
+  .qk-item .nm { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer; }
+  .pathbar { background:#0c0e12; border:1px solid var(--line); border-radius:8px; padding:8px 10px; font-size:12px; color:var(--muted); word-break:break-all; }
   @media (max-width:760px) { .login-grid { grid-template-columns:1fr; } }
 </style>
 </head>
 <body>
 <div class="wrap">
   <h1>抖音博主视频下载器</h1>
-  <div class="sub">输入抖音号 → 抓取博主全部作品 → 勾选下载（保存到 D:\视频\博主昵称\）</div>
+  <div class="sub" id="subLine">输入抖音号 → 抓取博主全部作品 → 勾选下载（保存到 D:\视频\博主昵称\）</div>
 
   <div class="panel">
     <div class="row" style="margin-top:10px">
@@ -172,6 +182,12 @@
       <button class="ghost" id="btnNone">取消全选</button>
       <span class="muted" id="selInfo">已选 0 / 0</span>
       <span class="muted" style="font-size:12px">单次最多 50 条，超出自动分批（批间冷却 20 秒）</span>
+      <span class="muted" style="white-space:nowrap">保存到</span>
+      <span class="seg" id="targetSeg">
+        <button type="button" data-t="local" class="on">电脑</button>
+        <button type="button" data-t="phone">手机相册</button>
+        <button type="button" data-t="quark">夸克网盘</button>
+      </span>
       <span class="spacer"></span>
       <button class="ghost" id="btnCsv">导出列表 CSV</button>
       <button class="ghost" id="btnDownloadSel">下载所选</button>
@@ -202,16 +218,60 @@
     <div class="log" id="log"></div>
   </div>
 
+  <div class="panel" id="quarkPanel">
+    <button type="button" class="fold" id="btnQuarkFold">夸克网盘：展开设置</button>
+    <div id="quarkBody" style="display:none;margin-top:12px">
+      <div class="row">
+        <span class="muted" id="quarkStatus">检查中…</span>
+        <span class="spacer" style="flex:1"></span>
+        <button class="ghost" id="btnQuarkCheck">测试连接</button>
+        <button class="ghost" id="btnQuarkOpen">打开夸克登录页</button>
+        <button class="ghost" id="btnQuarkImport">从浏览器导入</button>
+      </div>
+      <div class="muted" style="margin-top:8px">
+        连法一：点「打开夸克登录页」，在弹出的浏览器窗口里登录夸克网盘，再点「从浏览器导入」（需本机版；服务器是无头模式，弹不出窗口）。<br>
+        连法二：自己在电脑浏览器登录 pan.quark.cn，按 F12 → Network → 找一条 <b>drive-pc.quark.cn</b> 请求 → 复制请求头里整串 <b>Cookie</b> 粘贴到下面。
+      </div>
+      <textarea class="cookie" id="quarkCookie" placeholder="__pus=...; __puus=..."></textarea>
+      <div class="row"><button class="ghost" id="btnQuarkSaveCookie">保存并测试 Cookie</button><span class="muted" id="quarkCookieMsg"></span></div>
+      <div class="row" style="margin-top:12px">
+        <span class="muted" style="white-space:nowrap">网盘路径</span>
+        <input type="text" id="quarkPath" placeholder="/抖音下载器" style="flex:1">
+        <button class="ghost" id="btnQuarkBrowse">浏览目录</button>
+        <button id="btnQuarkSavePath">保存路径</button>
+      </div>
+      <div id="quarkBrowse" style="display:none;margin-top:10px">
+        <div class="pathbar" id="quarkCrumbs">/ （根目录）</div>
+        <div class="list" style="max-height:30vh;margin-top:8px" id="quarkDirs"></div>
+        <div class="row" style="margin-top:8px">
+          <input type="text" id="quarkNewDir" placeholder="新建文件夹名称" style="flex:1">
+          <button class="ghost" id="btnQuarkMkdir">新建</button>
+          <button id="btnQuarkPickDir">选定当前目录</button>
+        </div>
+      </div>
+      <div class="row" style="margin-top:12px"><b>上传进度</b><span class="muted" id="quarkTaskInfo">-</span></div>
+      <div class="log" id="quarkLog" style="height:110px;margin-top:6px"></div>
+    </div>
+  </div>
+
   <div class="panel" id="filesPanel" style="display:none">
     <div class="row">
       <b>已下载文件</b>
+      <label class="muted"><input type="checkbox" id="fileAll"> 全选</label>
+      <span class="muted" id="fileSelInfo">已选 0</span>
       <span class="spacer" style="flex:1"></span>
       <span class="muted" id="filesDir"></span>
       <button class="ghost" id="btnRefreshFiles">刷新</button>
     </div>
+    <div class="row" style="margin-top:8px">
+      <button class="ghost" id="btnPackSel">打包成压缩包</button>
+      <button class="ghost" id="btnQuarkUploadSel">上传所选到夸克网盘</button>
+      <button class="ghost" id="btnPhoneSave">把所选存到手机相册</button>
+      <span class="muted" id="packMsg"></span>
+    </div>
     <div class="list" style="max-height:42vh;margin-top:10px">
       <table>
-        <thead><tr><th>文件名</th><th style="width:100px">大小</th><th style="width:130px">操作</th></tr></thead>
+        <thead><tr><th style="width:32px"></th><th>文件名</th><th style="width:100px">大小</th><th style="width:130px">操作</th></tr></thead>
         <tbody id="fileBody"></tbody>
       </table>
     </div>
@@ -223,7 +283,7 @@ const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
 if (params.get('token')) localStorage.setItem('dy_token', params.get('token'));
 const TOKEN = localStorage.getItem('dy_token') || '';
-let state = { user: null, videos: [], selected: new Set(), loggedIn: false, config: null, mode: 'douyin' };
+let state = { user: null, videos: [], selected: new Set(), loggedIn: false, config: null, mode: 'douyin', target: 'local', files: [], fileSelected: new Set(), quark: null };
 
 function withToken(url) {
   if (!TOKEN) return url;
@@ -511,6 +571,12 @@ async function waitDownloadDone() {
 
 async function startDownload(ids) {
   if (!ids.length) { alert('没有选中视频'); return; }
+  const target = currentTarget();
+  const quarkPath = ($('quarkPath').value || '').trim() || (state.quark && state.quark.rootPath) || '/抖音下载器';
+  if (target === 'quark' && !(state.quark && state.quark.loggedIn)) {
+    const go = confirm('夸克网盘现在还没连上（下载会照常存到电脑，但传不上网盘）。要先去连接夸克网盘吗？');
+    if (go) { openQuarkBody(); $('quarkPanel').scrollIntoView({ behavior: 'smooth' }); return; }
+  }
   const maxBatch = batchLimit();
   const batches = [];
   for (let i = 0; i < ids.length; i += maxBatch) batches.push(ids.slice(i, i + maxBatch));
@@ -520,17 +586,23 @@ async function startDownload(ids) {
   }
   $('btnDownloadSel').disabled = true;
   $('btnDownloadAll').disabled = true;
+  const produced = [];
   try {
     for (let b = 0; b < batches.length; b++) {
-      $('msg').textContent = `正在下载第 ${b + 1}/${batches.length} 批（${batches[b].length} 条）…`;
+      const where = target === 'quark' ? '，完成后上传夸克网盘 ' + quarkPath : (target === 'phone' ? '，完成后拉回手机' : '');
+      $('msg').textContent = `正在下载第 ${b + 1}/${batches.length} 批（${batches[b].length} 条）${where}…`;
+      let final;
       if (state.mode === 'url') {
         const urls = state.videos.filter(v => batches[b].includes(v.aweme_id)).map(v => v.source_url);
-        await api('/api/url/download', { method: 'POST', body: JSON.stringify({ urls, title: (state.user && state.user.nickname) || '通用下载', quality: $('quality').value }) });
+        await api('/api/url/download', { method: 'POST', body: JSON.stringify({ urls, title: (state.user && state.user.nickname) || '通用下载', quality: $('quality').value, target, quarkPath }) });
       } else {
-        await api('/api/download', { method: 'POST', body: JSON.stringify({ awemeIds: batches[b] }) });
+        await api('/api/download', { method: 'POST', body: JSON.stringify({ awemeIds: batches[b], target, quarkPath }) });
       }
+      if (target === 'quark') pollQuarkTask();
       $('dlPanel').scrollIntoView({ behavior: 'smooth' });
-      await waitDownloadDone();
+      final = await waitDownloadDone();
+      (final.produced || []).forEach(n => produced.push(n));
+      if (final.quarkError) $('msg').innerHTML = '<span class="err">网盘上传环节：' + final.quarkError + '</span>';
       if (b < batches.length - 1) {
         $('msg').textContent = `第 ${b + 1} 批完成，冷却 ${cooldownMs() / 1000} 秒后继续…`;
         await new Promise(r => setTimeout(r, cooldownMs()));
@@ -541,12 +613,24 @@ async function startDownload(ids) {
       if (v) v.downloaded = true;
     });
     renderList();
-    $('msg').innerHTML = '<span class="ok">全部批次下载完成</span>';
+    if (target === 'phone') {
+      if (!produced.length) {
+        $('msg').innerHTML = '<span class="err">这一批没有产出文件，手机无东西可拉</span>';
+      } else {
+        $('msg').innerHTML = `<span class="ok">下载完成 ${produced.length} 个文件，开始存到手机…</span>`;
+        await saveToPhone(produced);
+      }
+    } else if (target === 'quark') {
+      $('msg').innerHTML = '<span class="ok">下载+上传流程结束，明细见「上传进度」日志</span>';
+    } else {
+      $('msg').innerHTML = '<span class="ok">全部批次下载完成</span>';
+    }
   } catch (e) {
     alert(e.message);
   } finally {
     $('btnDownloadSel').disabled = false;
     $('btnDownloadAll').disabled = false;
+    loadFiles();
   }
 }
 $('btnDownloadSel').onclick = () => startDownload([...state.selected]);
@@ -667,22 +751,158 @@ async function loadFiles() {
     const r = await api('/api/files');
     $('filesPanel').style.display = '';
     $('filesDir').textContent = r.dir;
+    state.files = r.files.map(f => f.name);
+    [...state.fileSelected].forEach(n => { if (state.files.indexOf(n) < 0) state.fileSelected.delete(n); });
     const tb = $('fileBody');
     tb.innerHTML = '';
     if (!r.files.length) {
-      tb.innerHTML = '<tr><td colspan="3" class="muted">目录里还没有文件</td></tr>';
+      tb.innerHTML = '<tr><td colspan="4" class="muted">目录里还没有文件</td></tr>';
+      updateFileSelInfo();
       return;
     }
     r.files.slice(0, 300).forEach(f => {
       const tr = document.createElement('tr');
       const size = f.size > 1048576 ? (f.size / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(f.size / 1024)) + ' KB';
       const name = f.name.replace(/"/g, '&quot;');
-      tr.innerHTML = `<td class="title" title="${name}">${name}</td><td class="muted">${size}</td><td><a class="muted" href="${withToken('/api/files/stream?name=' + encodeURIComponent(f.name))}" target="_blank">预览</a> <a class="muted" href="${withToken('/api/files/download?name=' + encodeURIComponent(f.name))}" download>下载</a></td>`;
+      const on = state.fileSelected.has(f.name) ? ' checked' : '';
+      tr.innerHTML = `<td><input type="checkbox" class="filechk"${on} data-name="${name}"></td>`
+        + `<td class="title" title="${name}">${name}</td><td class="muted">${size}</td>`
+        + `<td><a class="muted" href="${withToken('/api/files/stream?name=' + encodeURIComponent(f.name))}" target="_blank">预览</a> `
+        + `<a class="muted" href="${withToken('/api/files/download?name=' + encodeURIComponent(f.name))}" download>下载</a></td>`;
       tb.appendChild(tr);
     });
+    tb.querySelectorAll('.filechk').forEach(cb => {
+      cb.onchange = () => {
+        if (cb.checked) state.fileSelected.add(cb.dataset.name);
+        else state.fileSelected.delete(cb.dataset.name);
+        updateFileSelInfo();
+      };
+    });
+    updateFileSelInfo();
   } catch (e) { /* ignore */ }
 }
-$('btnRefreshFiles').onclick = loadFiles;
+function selectedFiles() {
+  return [...state.fileSelected];
+}
+function updateFileSelInfo() {
+  $('fileSelInfo').textContent = `已选 ${state.fileSelected.size}`;
+}
+$('fileAll').onchange = () => {
+  if ($('fileAll').checked) state.files.forEach(n => state.fileSelected.add(n));
+  else state.fileSelected.clear();
+  loadFiles();
+};
+$('btnPackSel').onclick = async () => {
+  const names = selectedFiles();
+  if (!names.length) { alert('请先在文件列表勾选要打包的文件'); return; }
+  $('packMsg').textContent = `正在打包 ${names.length} 个文件…`;
+  try {
+    const r = await api('/api/pack', { method: 'POST', body: JSON.stringify({ names }) });
+    $('packMsg').innerHTML = `<span class="ok">已打包 ${r.packed} 个 → ${r.name}（${(r.size / 1048576).toFixed(1)} MB）${r.missing.length ? '，跳过缺失 ' + r.missing.length + ' 个' : ''}</span>`;
+    loadFiles();
+  } catch (e) {
+    $('packMsg').innerHTML = '<span class="err">' + e.message + '</span>';
+  }
+};
+$('btnQuarkUploadSel').onclick = () => uploadNamesToQuark(selectedFiles());
+$('btnPhoneSave').onclick = () => saveToPhone(selectedFiles());
+
+async function uploadNamesToQuark(names) {
+  if (!names.length) { alert('请先勾选文件'); return; }
+  const path = $('quarkPath').value.trim() || (state.config && state.config.quark && state.config.quark.rootPath) || '/抖音下载器';
+  try {
+    const r = await api('/api/quark/upload', { method: 'POST', body: JSON.stringify({ names, pdirPath: path }) });
+    $('quarkPanel').style.display = '';
+    openQuarkBody();
+    $('quarkTaskInfo').textContent = `正在上传 ${r.count} 个到 ${r.path}…`;
+    pollQuarkTask();
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+// 手机：让浏览器/WebView 逐个把文件拉下来；装了 App 时会直接落进相册
+async function saveToPhone(names) {
+  if (!names.length) { alert('请先勾选文件'); return; }
+  for (let i = 0; i < names.length; i++) {
+    $('packMsg').textContent = `正在保存到本机 ${i + 1}/${names.length}：${names[i]}`;
+    const a = document.createElement('a');
+    a.href = withToken('/api/files/download?name=' + encodeURIComponent(names[i]));
+    a.download = names[i].split('/').pop();
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    await new Promise(r => setTimeout(r, 1200));
+  }
+  $('packMsg').innerHTML = `<span class="ok">已触发 ${names.length} 个保存请求</span> — 用 App 打开的会直接进相册（DCIM/抖音下载器、Pictures/抖音下载器）；用手机浏览器打开的落在浏览器下载目录。`;
+}
+
+let quarkPollTimer = null;
+function pollQuarkTask() {
+  clearTimeout(quarkPollTimer);
+  quarkPollTimer = setTimeout(async () => {
+    try {
+      const s = await api('/api/quark/task');
+      $('quarkTaskInfo').textContent = `${s.done + s.failed} / ${s.total || 0}`
+        + (s.current ? ' · ' + s.current : '') + (s.running ? ' 上传中…' : ' 已结束');
+      $('quarkLog').textContent = (s.log || []).join('\n');
+      $('quarkLog').scrollTop = $('quarkLog').scrollHeight;
+      if (s.running) pollQuarkTask();
+    } catch (e) { /* ignore */ }
+  }, 1000);
+}
+
+function openQuarkBody() {
+  $('quarkBody').style.display = '';
+  $('btnQuarkFold').classList.add('on');
+  $('btnQuarkFold').textContent = '夸克网盘：收起设置';
+}
+
+let quarkCwd = { fid: '0', path: '' };
+async function loadQuarkStatus() {
+  try {
+    const s = await api('/api/quark/status');
+    state.quark = s;
+    if (s.rootPath) $('quarkPath').value = s.rootPath;
+    $('quarkStatus').innerHTML = s.loggedIn
+      ? `<span class="ok">● 已连接</span> 根目录 ${s.rootCount} 项，Cookie 长度 ${s.cookieLen}`
+      : (s.configured ? `<span class="err">● Cookie 已失效：</span>${s.error}` : '○ 未连接：按下面两种方式之一登录');
+    $('btnQuarkFold').textContent = s.loggedIn ? '夸克网盘：已连接，展开设置' : '夸克网盘：未连接，展开设置';
+  } catch (e) {
+    $('quarkStatus').innerHTML = '<span class="err">读取状态失败：' + e.message + '</span>';
+  }
+}
+let quarkStack = [{ fid: '0', path: '' }];
+async function browseQuarkDir(entry) {
+  quarkStack = entry.stack;
+  const fid = entry.fid, path = entry.path;
+  quarkCwd = { fid, path };
+  $('quarkCrumbs').textContent = '当前目录：' + (path ? '/' + path : '/（根目录）');
+  $('quarkDirs').innerHTML = '<div class="qk-item muted">加载中…</div>';
+  try {
+    const r = await api('/api/quark/ls?pdir_fid=' + encodeURIComponent(fid));
+    const dirs = r.items.filter(i => i.dir);
+    $('quarkDirs').innerHTML = '';
+    if (quarkStack.length > 1) {
+      const up = document.createElement('div');
+      up.className = 'qk-item';
+      up.innerHTML = '<span class="nm">↩ 返回上级</span>';
+      up.onclick = () => browseQuarkDir(quarkStack[quarkStack.length - 2]);
+      $('quarkDirs').appendChild(up);
+    }
+    if (!dirs.length) $('quarkDirs').insertAdjacentHTML('beforeend', '<div class="qk-item muted">这一层没有子目录</div>');
+    dirs.forEach(d => {
+      const row = document.createElement('div');
+      row.className = 'qk-item';
+      row.innerHTML = `<span class="nm">📁 ${d.name.replace(/</g, '&lt;')}</span><span class="muted">进入 ›</span>`;
+      row.onclick = () => browseQuarkDir({ fid: d.fid, path: path ? path + '/' + d.name : d.name, stack: quarkStack.concat([{ fid, path }]) });
+      $('quarkDirs').appendChild(row);
+    });
+  } catch (e) {
+    $('quarkDirs').innerHTML = '<div class="qk-item err">' + e.message + '</div>';
+  }
+}
+
 
 $('btnUpdateYtdlp').onclick = async () => {
   $('msg').textContent = '正在更新 yt-dlp…';
@@ -715,8 +935,95 @@ $('btnCsv').onclick = () => {
   setTimeout(() => URL.revokeObjectURL(a.href), 3000);
 };
 
+$('btnRefreshFiles').onclick = loadFiles;
+
+$('btnQuarkFold').onclick = () => {
+  const open = $('quarkBody').style.display !== 'none';
+  $('quarkBody').style.display = open ? 'none' : '';
+  $('btnQuarkFold').classList.toggle('on', !open);
+  if (!open) loadQuarkStatus();
+};
+$('btnQuarkCheck').onclick = loadQuarkStatus;
+$('btnQuarkOpen').onclick = async () => {
+  $('quarkCookieMsg').textContent = '正在打开夸克网盘页面…';
+  try {
+    const r = await api('/api/quark/open-login', { method: 'POST', body: '{}' });
+    $('quarkCookieMsg').textContent = r.hint;
+    if (r.headless) openQuarkBody();
+  } catch (e) {
+    $('quarkCookieMsg').innerHTML = '<span class="err">' + e.message + '</span>';
+  }
+};
+$('btnQuarkImport').onclick = async () => {
+  $('quarkCookieMsg').textContent = '正在从浏览器读取…';
+  try {
+    const r = await api('/api/quark/import', { method: 'POST', body: '{}' });
+    $('quarkCookieMsg').innerHTML = `<span class="ok">导入成功，根目录 ${r.rootCount} 项</span>`;
+    loadQuarkStatus();
+  } catch (e) {
+    $('quarkCookieMsg').innerHTML = '<span class="err">' + e.message + '</span>';
+  }
+};
+$('btnQuarkSaveCookie').onclick = async () => {
+  const raw = $('quarkCookie').value.trim();
+  if (!raw) { alert('请先粘贴 Cookie'); return; }
+  $('quarkCookieMsg').textContent = '正在校验…';
+  try {
+    const r = await api('/api/quark/cookie', { method: 'POST', body: JSON.stringify({ cookie: raw }) });
+    $('quarkCookieMsg').innerHTML = `<span class="ok">可用，根目录 ${r.rootCount} 项，已保存</span>`;
+    $('quarkCookie').value = '';
+    loadQuarkStatus();
+  } catch (e) {
+    $('quarkCookieMsg').innerHTML = '<span class="err">' + e.message + '</span>';
+  }
+};
+$('btnQuarkSavePath').onclick = async () => {
+  try {
+    await api('/api/config', { method: 'POST', body: JSON.stringify({ quarkRootPath: $('quarkPath').value }) });
+    $('quarkCookieMsg').innerHTML = '<span class="ok">网盘路径已保存</span>';
+    loadQuarkStatus();
+  } catch (e) {
+    alert(e.message);
+  }
+};
+$('btnQuarkBrowse').onclick = () => {
+  const show = $('quarkBrowse').style.display === 'none';
+  $('quarkBrowse').style.display = show ? '' : 'none';
+  if (show) browseQuarkDir({ fid: '0', path: '', stack: [{ fid: '0', path: '' }] });
+};
+$('btnQuarkMkdir').onclick = async () => {
+  const name = $('quarkNewDir').value.trim();
+  if (!name) { alert('请输入文件夹名称'); return; }
+  try {
+    await api('/api/quark/mkdir', { method: 'POST', body: JSON.stringify({ pdir_fid: quarkCwd.fid, name }) });
+    $('quarkNewDir').value = '';
+    browseQuarkDir({ fid: quarkCwd.fid, path: quarkCwd.path, stack: quarkStack });
+  } catch (e) {
+    alert(e.message);
+  }
+};
+$('btnQuarkPickDir').onclick = () => {
+  $('quarkPath').value = '/' + (quarkCwd.path || '');
+  $('quarkBrowse').style.display = 'none';
+  $('btnQuarkSavePath').click();
+};
+
+// 手机/电脑/网盘三选一
+function currentTarget() { return state.target || 'local'; }
+function setTarget(t) {
+  state.target = t;
+  [...$('targetSeg').children].forEach(b => b.classList.toggle('on', b.dataset.t === t));
+  const txt = t === 'phone'
+    ? '勾选后点下载：文件先落在服务器/电脑，再由手机逐个拉回相册'
+    : (t === 'quark' ? '勾选后点下载：下完自动上传到上面的夸克网盘路径' : '输入抖音号 → 抓取作品 → 勾选下载到电脑下载目录');
+  $('subLine').textContent = txt;
+}
+[...$('targetSeg').children].forEach(b => { b.onclick = () => setTarget(b.dataset.t); });
+
 loadConfig();
 loadFiles();
+loadQuarkStatus();
+setTarget('local');
 
 refreshLogin();
 setInterval(refreshLogin, 2000);

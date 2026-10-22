@@ -7,8 +7,9 @@ const http = require('http');
 const os = require('os');
 const crypto = require('crypto');
 const { execFile } = require('child_process');
+const quark = require('./quark');
 
-const PORT = 3210;
+const PORT = Number(process.env.PORT) || 3210;
 const HOST = '0.0.0.0';
 const IS_WIN = process.platform === 'win32';
 const HEADLESS = process.env.HEADLESS === '1' || process.env.HEADLESS === 'true';
@@ -163,6 +164,85 @@ let busy = false;
 let currentUser = null;
 let currentVideos = [];
 let downloadState = { running: false, total: 0, done: 0, failed: 0, current: '', log: [] };
+
+let quarkState = { running: false, total: 0, done: 0, failed: 0, current: '', log: [], path: '', results: [] };
+
+function getQuarkCookie() {
+  return String((appConfig.quark && appConfig.quark.cookie) || '').trim();
+}
+function quarkInfo() {
+  const q = appConfig.quark || {};
+  return {
+    hasCookie: !!getQuarkCookie(),
+    cookieLen: getQuarkCookie().length,
+    rootPath: q.rootPath || '/抖音下载器',
+  };
+}
+function relToRoot(abs) {
+  return path.relative(getDownloadRoot(), abs).split(path.sep).join('/');
+}
+function resolveUnderRoot(name) {
+  const rel = String(name || '');
+  if (!rel || rel.indexOf('..') >= 0 || rel.indexOf('\\') >= 0) throw new Error(`文件名不合法：${rel}`);
+  const root = path.resolve(getDownloadRoot());
+  const p = path.resolve(root, rel);
+  if (p !== root && !p.startsWith(root + path.sep)) throw new Error(`文件不在下载目录内：${rel}`);
+  return p;
+}
+function pushQuarkLog(msg) {
+  const line = `[${new Date().toLocaleTimeString('zh-CN', { hour12: false })}] ${msg}`;
+  quarkState.log.push(line);
+  if (quarkState.log.length > 300) quarkState.log.splice(0, quarkState.log.length - 300);
+  pushLog(msg);
+}
+
+// 把下载目录里的若干文件（相对路径）上传到夸克网盘指定路径
+async function pushToQuark(names, posixPath) {
+  const cookie = getQuarkCookie();
+  if (!cookie) throw new Error('未配置夸克网盘 Cookie：文件已在本机下载目录，但没有上传');
+  if (quarkState.running) throw new Error('已有夸克上传任务在进行');
+  quarkState = { running: true, total: names.length, done: 0, failed: 0, current: '', log: quarkState.log, path: posixPath, results: [] };
+  pushQuarkLog(`准备上传 ${names.length} 个文件到夸克网盘 ${posixPath}`);
+  let dir;
+  try {
+    dir = await quark.ensurePath(cookie, posixPath, true);
+    pushQuarkLog(`网盘目录就绪：${dir.path} (fid=${dir.fid})`);
+  } catch (e) {
+    quarkState.running = false;
+    pushQuarkLog(`网盘目录解析失败：${e.message}`);
+    throw e;
+  }
+  for (const n of names) {
+    quarkState.current = n;
+    let abs;
+    try {
+      abs = resolveUnderRoot(n);
+      if (!fs.existsSync(abs)) throw new Error('本机文件不存在');
+    } catch (e) {
+      quarkState.failed += 1;
+      quarkState.results.push({ name: n, ok: false, error: e.message });
+      pushQuarkLog(`跳过 ${n}：${e.message}`);
+      continue;
+    }
+    try {
+      const r = await quark.uploadFile(cookie, abs, dir.fid, (p) => {
+        quarkState.phase = p.phase;
+        if (p.total) quarkState.current = `${n} 分片 ${p.part}/${p.total}`;
+      });
+      quarkState.done += 1;
+      quarkState.results.push({ name: n, ok: true, fid: r.fid, instant: r.instant, size: r.size });
+      pushQuarkLog(`已上传 ${n}${r.instant ? '（秒传，云端已有同一文件）' : ''}`);
+    } catch (e) {
+      quarkState.failed += 1;
+      quarkState.results.push({ name: n, ok: false, error: e.message });
+      pushQuarkLog(`上传失败 ${n}：${e.message}`);
+    }
+  }
+  quarkState.running = false;
+  quarkState.current = '';
+  pushQuarkLog(`夸克任务结束：成功 ${quarkState.done}，失败 ${quarkState.failed}`);
+  return { path: dir.path, results: quarkState.results };
+}
 
 const app = express();
 app.use(express.json({ limit: '2mb' }));
@@ -571,20 +651,28 @@ function guessImageExt(url) {
   return e === 'jpeg' ? '.jpg' : '.' + e;
 }
 
-async function downloadItem(item, dir, onProgress) {
+async function downloadItem(item, dir, onProgress, onFile) {
   const base = fileBase(item);
+  const written = [];
   if (item.is_image && item.images.length) {
     for (let i = 0; i < item.images.length; i++) {
       const img = item.images[i];
-      await downloadFile(img.url, path.join(dir, `${base}_${i + 1}${guessImageExt(img.url)}`), onProgress);
+      const p = path.join(dir, `${base}_${i + 1}${guessImageExt(img.url)}`);
+      await downloadFile(img.url, p, onProgress);
+      written.push(p);
       if (img.video) {
-        await downloadFile(img.video, path.join(dir, `${base}_${i + 1}_live.mp4`), onProgress);
+        const lp = path.join(dir, `${base}_${i + 1}_live.mp4`);
+        await downloadFile(img.video, lp, onProgress);
+        written.push(lp);
       }
     }
-    return `${base}（${item.images.length} 张图）`;
+  } else {
+    const p = path.join(dir, `${base}.mp4`);
+    await downloadFile(item.play_url, p, onProgress);
+    written.push(p);
   }
-  await downloadFile(item.play_url, path.join(dir, `${base}.mp4`), onProgress);
-  return `${base}.mp4`;
+  if (typeof onFile === 'function') written.forEach((f) => onFile(f));
+  return written;
 }
 
 function isDownloaded(base, dir) {
@@ -608,13 +696,14 @@ async function withRetry(fn, retries) {
   throw lastErr;
 }
 
-async function runDownload(items) {
+async function runDownload(items, opts) {
+  const target = (opts && opts.target) || 'local';
   const safe = getSafeMode();
-  downloadState = { running: true, total: items.length, done: 0, failed: 0, skipped: 0, current: '', log: [], safeMode: safe };
+  downloadState = { running: true, total: items.length, done: 0, failed: 0, skipped: 0, current: '', log: [], safeMode: safe, target, produced: [], quarkError: '' };
   const user = currentUser || { nickname: 'unknown' };
   const dir = path.join(getDownloadRoot(), sanitize(user.nickname, 40));
   fs.mkdirSync(dir, { recursive: true });
-  pushLog(`开始下载 ${items.length} 条到 ${dir}（${safe ? '安全模式' : '普通模式'}）`);
+  pushLog(`开始下载 ${items.length} 条到 ${dir}（${safe ? '安全模式' : '普通模式'}，去向 ${target}）`);
 
   let failStreak = 0;
   for (const item of items) {
@@ -624,18 +713,24 @@ async function runDownload(items) {
     if (isDownloaded(base, dir)) {
       downloadState.skipped += 1;
       downloadState.done += 1;
+      try {
+        for (const f of fs.readdirSync(dir)) {
+          if (f.startsWith(base + '.') || f.startsWith(base + '_')) downloadState.produced.push(relToRoot(path.join(dir, f)));
+        }
+      } catch (e) { /* 目录不可读时跳过登记 */ }
       pushLog(`跳过已存在: ${base}`);
       continue;
     }
     try {
-      const name = await withRetry(() => downloadItem(item, dir, (received, total) => {
-        downloadState.fileProgress = { received, total };
-      }), safe ? 1 : 2);
+      const written = await withRetry(() => downloadItem(item, dir,
+        (received, total) => { downloadState.fileProgress = { received, total }; },
+        (f) => downloadState.produced.push(relToRoot(f)),
+      ), safe ? 1 : 2);
       downloadState.done += 1;
       downloadState.fileProgress = null;
       failStreak = 0;
       bumpTodayCount(1);
-      pushLog(`完成 ${downloadState.done}/${downloadState.total}: ${name}`);
+      pushLog(`完成 ${downloadState.done}/${downloadState.total}: ${base}（${written.length} 个文件）`);
     } catch (e) {
       downloadState.failed += 1;
       failStreak += 1;
@@ -652,9 +747,23 @@ async function runDownload(items) {
       await new Promise(r => setTimeout(r, delay));
     }
   }
+  pushLog(`全部结束：成功 ${downloadState.done - downloadState.skipped}，跳过 ${downloadState.skipped}，失败 ${downloadState.failed}`);
+  if (target === 'quark') {
+    const names = downloadState.produced;
+    const qpath = String((opts && opts.quarkPath) || quarkInfo().rootPath) + '/' + sanitize(user.nickname, 40);
+    if (!names.length) {
+      downloadState.quarkError = '没有产出文件，未上传网盘';
+      pushQuarkLog(downloadState.quarkError);
+    } else {
+      try {
+        await pushToQuark(names, qpath);
+      } catch (e) {
+        downloadState.quarkError = e.message;
+      }
+    }
+  }
   downloadState.running = false;
   downloadState.current = '';
-  pushLog(`全部结束：成功 ${downloadState.done - downloadState.skipped}，跳过 ${downloadState.skipped}，失败 ${downloadState.failed}`);
 }
 
 function runYtdlp(args, timeout = 300000) {
@@ -689,9 +798,23 @@ function formatForQuality(quality, hasFfmpeg) {
   return `bestvideo[height<=${h}][ext=mp4]+bestaudio[ext=m4a]/best[height<=${h}][ext=mp4]/best`;
 }
 
-async function runYtdlpDownload(urls, title, quality) {
+function parseYtdlpPaths(out) {
+  const found = [];
+  for (const line of String(out || '').split('\n')) {
+    let m = /\[download\] Destination: (.+?)\s*$/m.exec(line);
+    if (!m) m = /\[download\] File "([^"]+)" has already been downloaded/m.exec(line);
+    if (m) {
+      const p = m[1].trim();
+      if (p && fs.existsSync(p)) found.push(p);
+    }
+  }
+  return found;
+}
+
+async function runYtdlpDownload(urls, title, quality, opts) {
+  const target = (opts && opts.target) || 'local';
   const safe = getSafeMode();
-  downloadState = { running: true, total: urls.length, done: 0, failed: 0, skipped: 0, current: '', log: [], safeMode: safe };
+  downloadState = { running: true, total: urls.length, done: 0, failed: 0, skipped: 0, current: '', log: [], safeMode: safe, target, produced: [], quarkError: '' };
   if (appConfig.useCookies !== false) await exportCookies();
   const platform = platformFromUrl(urls[0]);
   const dir = path.join(getDownloadRoot(), platform, sanitize(title, 60));
@@ -714,6 +837,7 @@ async function runYtdlpDownload(urls, title, quality) {
         '-o', path.join(dir, '%(upload_date)s_%(title).80s_%(id)s.%(ext)s'),
         url,
       ]), safe ? 1 : 2);
+      for (const p of parseYtdlpPaths(out)) downloadState.produced.push(relToRoot(p));
       if (out.includes('has already been downloaded')) {
         downloadState.skipped += 1;
         downloadState.done += 1;
@@ -732,9 +856,23 @@ async function runYtdlpDownload(urls, title, quality) {
       await new Promise(r => setTimeout(r, range.min + Math.random() * (range.max - range.min)));
     }
   }
+  pushLog(`全部结束：成功 ${downloadState.done - downloadState.skipped}，跳过 ${downloadState.skipped}，失败 ${downloadState.failed}`);
+  if (target === 'quark') {
+    const names = downloadState.produced;
+    const qpath = String((opts && opts.quarkPath) || quarkInfo().rootPath) + '/' + sanitize(title, 40);
+    if (!names.length) {
+      downloadState.quarkError = '没有产出文件，未上传网盘';
+      pushQuarkLog(downloadState.quarkError);
+    } else {
+      try {
+        await pushToQuark(names, qpath);
+      } catch (e) {
+        downloadState.quarkError = e.message;
+      }
+    }
+  }
   downloadState.running = false;
   downloadState.current = '';
-  pushLog(`全部结束：成功 ${downloadState.done - downloadState.skipped}，跳过 ${downloadState.skipped}，失败 ${downloadState.failed}`);
 }
 
 app.get('/api/config', (req, res) => {
@@ -749,6 +887,7 @@ app.get('/api/config', (req, res) => {
     todayCount: getTodayCount(),
     useCookies: appConfig.useCookies !== false,
     quality: appConfig.quality || 'best',
+    quark: quarkInfo(),
   });
 });
 
@@ -768,6 +907,11 @@ app.post('/api/config', (req, res) => {
       const n = Number(body.dailyLimit);
       if (!Number.isFinite(n) || n < 1) return res.status(400).json({ error: '每日上限必须是正数' });
       appConfig.dailyLimit = Math.floor(n);
+    }
+    if (body.quarkRootPath !== undefined) {
+      const segs = String(body.quarkRootPath || '').split('/').map(s => s.trim()).filter(s => s && s !== '.');
+      if (segs.indexOf('..') >= 0) return res.status(400).json({ error: '网盘路径不允许 ..' });
+      appConfig.quark = Object.assign({}, appConfig.quark, { rootPath: '/' + segs.join('/') });
     }
     saveConfig(appConfig);
     res.json({
@@ -808,7 +952,7 @@ app.post('/api/pick-dir', (req, res) => {
 });
 
 const SKIP_DIRS = new Set(['douyin-tool', 'node_modules', 'profile', '.git', 'android']);
-const MEDIA_EXT = new Set(['.mp4', '.webp', '.gif', '.jpg', '.jpeg', '.png', '.mov', '.m4a', '.mp3', '.heic']);
+const MEDIA_EXT = new Set(['.mp4', '.webp', '.gif', '.jpg', '.jpeg', '.png', '.mov', '.m4a', '.mp3', '.heic', '.zip']);
 
 function walkFiles(dir, base, out, depth) {
   if (depth > 3) return out;
@@ -1071,7 +1215,12 @@ app.post('/api/user', async (req, res) => {
 
 app.post('/api/download', async (req, res) => {
   if (downloadState.running) return res.status(409).json({ error: '下载任务进行中' });
-  const ids = Array.isArray(req.body && req.body.awemeIds) ? req.body.awemeIds : [];
+  const body = req.body || {};
+  const target = ['local', 'phone', 'quark'].indexOf(body.target) >= 0 ? body.target : 'local';
+  if (target === 'quark' && !getQuarkCookie()) {
+    return res.status(400).json({ error: '还没连接夸克网盘：请先在「夸克网盘」面板粘贴 Cookie 或登录，再选网盘为去向' });
+  }
+  const ids = Array.isArray(body.awemeIds) ? body.awemeIds : [];
   const items = ids.length
     ? currentVideos.filter(v => ids.includes(v.aweme_id))
     : currentVideos;
@@ -1086,8 +1235,8 @@ app.post('/api/download', async (req, res) => {
       return res.status(429).json({ error: `今日安全额度剩余 ${Math.max(0, left)} 条，本次 ${items.length} 条超限，请明天再下或调高每日上限` });
     }
   }
-  runDownload(items).catch(e => pushLog('下载任务异常：' + e.message));
-  res.json({ started: true, count: items.length });
+  runDownload(items, { target, quarkPath: body.quarkPath }).catch(e => pushLog('下载任务异常：' + e.message));
+  res.json({ started: true, count: items.length, target });
 });
 
 app.post('/api/url/resolve', async (req, res) => {
@@ -1126,7 +1275,12 @@ app.post('/api/url/resolve', async (req, res) => {
 
 app.post('/api/url/download', async (req, res) => {
   if (downloadState.running) return res.status(409).json({ error: '下载任务进行中' });
-  const urls = Array.isArray(req.body && req.body.urls)
+  const body = req.body || {};
+  const target = ['local', 'phone', 'quark'].indexOf(body.target) >= 0 ? body.target : 'local';
+  if (target === 'quark' && !getQuarkCookie()) {
+    return res.status(400).json({ error: '还没连接夸克网盘：请先在「夸克网盘」面板粘贴 Cookie 或登录' });
+  }
+  const urls = Array.isArray(body.urls)
     ? req.body.urls.filter(u => /^https?:\/\//i.test(String(u)))
     : [];
   const title = String((req.body && req.body.title) || '通用下载').trim();
@@ -1142,8 +1296,8 @@ app.post('/api/url/download', async (req, res) => {
       return res.status(429).json({ error: `今日安全额度剩余 ${Math.max(0, left)} 条，本次 ${urls.length} 条超限` });
     }
   }
-  runYtdlpDownload(urls, title, quality).catch(e => pushLog('下载任务异常：' + e.message));
-  res.json({ started: true, count: urls.length });
+  runYtdlpDownload(urls, title, quality, { target, quarkPath: body.quarkPath }).catch(e => pushLog('下载任务异常：' + e.message));
+  res.json({ started: true, count: urls.length, target });
 });
 
 app.get('/api/status', (req, res) => {
@@ -1151,6 +1305,129 @@ app.get('/api/status', (req, res) => {
     ...downloadState,
     user: currentUser,
   });
+});
+
+app.get('/api/quark/status', async (req, res) => {
+  const info = quarkInfo();
+  if (!info.hasCookie) return res.json({ configured: false, loggedIn: false, browserOpen: !!context, rootPath: info.rootPath });
+  try {
+    const r = await quark.checkCookie(getQuarkCookie());
+    res.json({ configured: true, loggedIn: true, rootCount: r.rootCount, cookieLen: info.cookieLen, rootPath: info.rootPath, browserOpen: !!context });
+  } catch (e) {
+    res.json({ configured: true, loggedIn: false, error: e.message, rootPath: info.rootPath, browserOpen: !!context });
+  }
+});
+
+app.post('/api/quark/cookie', (req, res) => {
+  const raw = String((req.body && req.body.cookie) || '').trim();
+  if (!raw) return res.status(400).json({ error: '请粘贴夸克网盘的 Cookie 字符串' });
+  const cookie = raw.replace(/\r?\n/g, ' ').replace(/;\s*;/g, ';');
+  if (cookie.length < 20) return res.status(400).json({ error: 'Cookie 太短，应该复制完整的一整串' });
+  quark.checkCookie(cookie).then((r) => {
+    appConfig.quark = Object.assign({}, appConfig.quark, { cookie });
+    saveConfig(appConfig);
+    res.json({ ok: true, loggedIn: true, rootCount: r.rootCount });
+  }).catch((e) => {
+    res.status(400).json({ error: e.message + '（Cookie 未保存）' });
+  });
+});
+
+app.post('/api/quark/open-login', async (req, res) => {
+  try {
+    await ensureBrowser();
+    await page.goto('https://pan.quark.cn/', { waitUntil: 'domcontentloaded', timeout: 60000 });
+    res.json({
+      ok: true,
+      headless: HEADLESS,
+      hint: HEADLESS
+        ? '服务器是无头模式，弹不出窗口：请直接在电脑本机版登录，或用「粘贴 Cookie」'
+        : '在打开的浏览器窗口里登录夸克网盘，登录完成后回来点「从浏览器导入」',
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/quark/import', async (req, res) => {
+  if (!context) return res.status(400).json({ error: '浏览器还没打开：先点「打开夸克登录页」并登录' });
+  try {
+    const list = await context.cookies('https://pan.quark.cn');
+    const cookie = list.map((c) => `${c.name}=${c.value}`).join('; ');
+    if (!/(^|; )__pus=/.test(cookie)) {
+      return res.status(400).json({ error: '浏览器里没有夸克登录凭证（__pus），说明还没登录成功' });
+    }
+    const r = await quark.checkCookie(cookie);
+    appConfig.quark = Object.assign({}, appConfig.quark, { cookie });
+    saveConfig(appConfig);
+    res.json({ ok: true, loggedIn: true, rootCount: r.rootCount, cookieNames: list.map(c => c.name).length });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/quark/ls', async (req, res) => {
+  if (!getQuarkCookie()) return res.status(400).json({ error: '未连接夸克网盘' });
+  const fid = String(req.query.pdir_fid || '0');
+  try {
+    res.json({ pdirFid: fid, items: await quark.listDir(getQuarkCookie(), fid) });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/quark/mkdir', async (req, res) => {
+  if (!getQuarkCookie()) return res.status(400).json({ error: '未连接夸克网盘' });
+  const pdirFid = String((req.body && req.body.pdir_fid) || '0');
+  const name = sanitize(String((req.body && req.body.name) || ''), 40);
+  try {
+    res.json({ ok: true, fid: await quark.mkdir(getQuarkCookie(), pdirFid, name) });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/quark/upload', (req, res) => {
+  const names = Array.isArray(req.body && req.body.names) ? req.body.names.map(String) : [];
+  if (!names.length) return res.status(400).json({ error: '没有选择文件' });
+  if (quarkState.running) return res.status(409).json({ error: '已有上传任务在进行' });
+  if (downloadState.running) return res.status(409).json({ error: '下载任务进行中，先等它结束' });
+  if (!getQuarkCookie()) return res.status(400).json({ error: '未连接夸克网盘' });
+  const p = String((req.body && req.body.pdirPath) || quarkInfo().rootPath);
+  pushToQuark(names, p).catch(e => pushQuarkLog('上传任务异常：' + e.message));
+  res.json({ started: true, count: names.length, path: p });
+});
+
+app.get('/api/quark/task', (req, res) => {
+  res.json(quarkState);
+});
+
+app.post('/api/pack', async (req, res) => {
+  const names = Array.isArray(req.body && req.body.names) ? req.body.names.map(String) : [];
+  if (!names.length) return res.status(400).json({ error: '没有选择文件' });
+  const entries = [];
+  const missing = [];
+  for (const n of names) {
+    try {
+      const abs = resolveUnderRoot(n);
+      if (fs.existsSync(abs)) entries.push({ src: abs, name: n });
+      else missing.push(n);
+    } catch (e) {
+      missing.push(n + '（' + e.message + '）');
+    }
+  }
+  if (!entries.length) return res.status(400).json({ error: '所选文件在本机都不存在，无法打包' });
+  const outDir = path.join(getDownloadRoot(), '_压缩包');
+  fs.mkdirSync(outDir, { recursive: true });
+  const zipName = sanitize(String((req.body && req.body.zipName) || ('打包_' + Date.now())), 60) + '.zip';
+  const outPath = path.join(outDir, zipName);
+  try {
+    const r = await quark.createZip(outPath, entries);
+    const size = fs.statSync(outPath).size;
+    pushLog(`打包完成：${zipName}，${entries.length} 个文件，${(size / 1048576).toFixed(1)} MB`);
+    res.json({ ok: true, name: relToRoot(outPath), size, packed: entries.length, missing });
+  } catch (e) {
+    res.status(500).json({ error: '打包失败：' + e.message });
+  }
 });
 
 app.listen(PORT, HOST, () => {

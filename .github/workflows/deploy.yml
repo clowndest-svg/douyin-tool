@@ -17,7 +17,7 @@ jobs:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          source: "server.js,package.json,package-lock.json,public"
+          source: "server.js,quark.js,package.json,package-lock.json,public"
           target: "/opt/douyin-tool"
           overwrite: true
 
