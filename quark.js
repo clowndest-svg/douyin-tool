@@ -317,7 +317,7 @@ async function uploadFile(cookie, filePath, pdirFid, onProgress) {
     const date2 = ossDate();
     const meta2 = completeAuthMeta(bucket, objKey, uploadId, xml, callback, date2, OSS_DONE_UA);
     const ak2 = await authKeyOf(meta2);
-    await ossRequest(host, 'POST', `/${objKey}?uploadId=${encodeURIComponent(uploadId)}`, {
+    const done = await ossRequest(host, 'POST', `/${objKey}?uploadId=${encodeURIComponent(uploadId)}`, {
       'Content-Type': 'application/xml',
       'x-oss-date': date2,
       'x-oss-user-agent': OSS_DONE_UA,
@@ -325,6 +325,10 @@ async function uploadFile(cookie, filePath, pdirFid, onProgress) {
       'Content-MD5': crypto.createHash('md5').update(xmlBuf).digest('base64'),
       authorization: ak2,
     }, xmlBuf, xmlBuf.length);
+    // OSS 的 callback 失败也回 HTTP 200，错误只写在响应体里，必须看正文
+    if (!/"Status"\s*:\s*"OK"/i.test(done.text || '') && !/<CompleteMultipartUpload/i.test(done.text || '')) {
+      throw new Error(`网盘登记文件失败（合并回执）：${String(done.text || '空响应').slice(0, 300)}`);
+    }
     report({ phase: 'complete', name });
   }
 
@@ -333,13 +337,24 @@ async function uploadFile(cookie, filePath, pdirFid, onProgress) {
   let fid = String((finish && finish.fid) || '');
   if (!fid && finish && finish.task_id) fid = await pollTaskFid(cookie, String(finish.task_id));
 
-  if (!instant) {
+  if (instant) return verifyUpload(cookie, pdirFid, name, size, fid, true);
+
+  // 网盘索引有延迟，刚传完立刻列目录会误报"找不到"，这里带退避重试
+  return verifyUpload(cookie, pdirFid, name, size, fid, false);
+}
+
+async function verifyUpload(cookie, pdirFid, name, size, fid, instant) {
+  for (let attempt = 0; attempt < 8; attempt++) {
     const items = await listDir(cookie, pdirFid);
-    const hit = items.find(it => !it.dir && it.name === name);
-    if (!hit) throw new Error(`夸克返回成功但目录里找不到「${name}」，请检查网盘是否被风控`);
-    return { fid: hit.fid, name, size, instant: false };
+    const hit = items.find((it) => !it.dir && it.name === name);
+    if (hit) return { fid: hit.fid, name, size, instant };
+    await new Promise((r) => setTimeout(r, 2000));
   }
-  return { fid, name, size, instant: true };
+  if (fid) {
+    return { fid, name, size, instant, unverified: true,
+      warning: `网盘已受理（fid=${fid}），但目录列表暂时还没刷出来，稍后在夸克里确认一下` };
+  }
+  throw new Error(`上传后在网盘目录里找不到「${name}」，可能是夸克风控或索引异常，请到网盘确认`);
 }
 
 function createZip(zipPath, entries, onProgress) {
@@ -372,4 +387,6 @@ module.exports = {
   completeAuthMeta,
   ossDate,
   CHUNK,
+  OSS_PART_UA,
+  OSS_DONE_UA,
 };

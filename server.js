@@ -166,6 +166,7 @@ let currentVideos = [];
 let downloadState = { running: false, total: 0, done: 0, failed: 0, current: '', log: [] };
 
 let quarkState = { running: false, total: 0, done: 0, failed: 0, current: '', log: [], path: '', results: [] };
+let stopRequested = false;
 
 function getQuarkCookie() {
   return String((appConfig.quark && appConfig.quark.cookie) || '').trim();
@@ -202,6 +203,7 @@ async function pushToQuark(names, posixPath) {
   if (!cookie) throw new Error('未配置夸克网盘 Cookie：文件已在本机下载目录，但没有上传');
   if (quarkState.running) throw new Error('已有夸克上传任务在进行');
   quarkState = { running: true, total: names.length, done: 0, failed: 0, current: '', log: quarkState.log, path: posixPath, results: [] };
+  stopRequested = false;
   pushQuarkLog(`准备上传 ${names.length} 个文件到夸克网盘 ${posixPath}`);
   let dir;
   try {
@@ -213,6 +215,10 @@ async function pushToQuark(names, posixPath) {
     throw e;
   }
   for (const n of names) {
+    if (stopRequested) {
+      pushQuarkLog(`收到停止指令，剩余 ${names.length - quarkState.done - quarkState.failed} 个文件不再上传`);
+      break;
+    }
     quarkState.current = n;
     let abs;
     try {
@@ -232,6 +238,7 @@ async function pushToQuark(names, posixPath) {
       quarkState.done += 1;
       quarkState.results.push({ name: n, ok: true, fid: r.fid, instant: r.instant, size: r.size });
       pushQuarkLog(`已上传 ${n}${r.instant ? '（秒传，云端已有同一文件）' : ''}`);
+      if (r.warning) pushQuarkLog(`注意 ${n}：${r.warning}`);
     } catch (e) {
       quarkState.failed += 1;
       quarkState.results.push({ name: n, ok: false, error: e.message });
@@ -836,7 +843,8 @@ async function runDownload(items, opts) {
   const target = (opts && opts.target) || 'local';
   const types = normalizeTypes(opts && opts.types);
   const safe = getSafeMode();
-  downloadState = { running: true, total: items.length, done: 0, failed: 0, skipped: 0, current: '', log: [], safeMode: safe, target, types, pack: !!(opts && opts.pack), produced: [], zip: '', packError: '', quarkError: '' };
+  downloadState = { running: true, total: items.length, done: 0, failed: 0, skipped: 0, current: '', log: [], safeMode: safe, target, types, pack: !!(opts && opts.pack), produced: [], zip: '', packError: '', quarkError: '', stopping: false };
+  stopRequested = false;
   const user = currentUser || { nickname: 'unknown' };
   const dir = path.join(getDownloadRoot(), sanitize(user.nickname, 40));
   fs.mkdirSync(dir, { recursive: true });
@@ -844,6 +852,11 @@ async function runDownload(items, opts) {
 
   let failStreak = 0;
   for (const item of items) {
+    if (stopRequested) {
+      downloadState.stopping = true;
+      pushLog(`已停止：剩余 ${items.length - downloadState.done - downloadState.failed} 条不再下载`);
+      break;
+    }
     downloadState.current = item.desc || item.aweme_id;
     downloadState.fileProgress = null;
     const base = fileBase(item);
@@ -967,7 +980,8 @@ function parseYtdlpPaths(out) {
 async function runYtdlpDownload(urls, title, quality, opts) {
   const target = (opts && opts.target) || 'local';
   const safe = getSafeMode();
-  downloadState = { running: true, total: urls.length, done: 0, failed: 0, skipped: 0, current: '', log: [], safeMode: safe, target, produced: [], quarkError: '' };
+  downloadState = { running: true, total: urls.length, done: 0, failed: 0, skipped: 0, current: '', log: [], safeMode: safe, target, produced: [], quarkError: '', stopping: false };
+  stopRequested = false;
   if (appConfig.useCookies !== false) await exportCookies();
   const platform = platformFromUrl(urls[0]);
   const dir = path.join(getDownloadRoot(), platform, sanitize(title, 60));
@@ -978,6 +992,11 @@ async function runYtdlpDownload(urls, title, quality, opts) {
   const format = formatForQuality(quality, hasFfmpeg);
 
   for (const url of urls) {
+    if (stopRequested) {
+      downloadState.stopping = true;
+      pushLog(`已停止：剩余 ${urls.length - downloadState.done - downloadState.failed} 条不再下载`);
+      break;
+    }
     downloadState.current = url;
     try {
       const out = await withRetry(() => runYtdlp([
@@ -1632,9 +1651,21 @@ app.post('/api/url/download', async (req, res) => {
   res.json({ started: true, count: urls.length, target });
 });
 
+app.post('/api/download/stop', (req, res) => {
+  const running = downloadState.running || quarkState.running;
+  if (!running) {
+    stopRequested = false;
+    return res.json({ ok: true, running: false, msg: '当前没有进行中的任务' });
+  }
+  stopRequested = true;
+  pushLog('收到停止指令：做完当前这一条就停（正在传的文件会先传完，避免留半截文件）');
+  res.json({ ok: true, running: true, stopping: true });
+});
+
 app.get('/api/status', (req, res) => {
   res.json({
     ...downloadState,
+    stopping: stopRequested && downloadState.running,
     user: currentUser,
   });
 });
