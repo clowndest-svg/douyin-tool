@@ -321,7 +321,7 @@ async function closeIdleBrowser() {
   try { await context.close(); } catch (e) { /* 已经关了 */ }
   context = null;
   page = null;
-  pushLog(`浏览器空闲超 ${Math.round(BROWSER_IDLE_MS / 60000)} 分钟，已关闭释放内存（登录态存在 profile，下次自动复用）`);
+  console.log(`[${new Date().toLocaleTimeString('zh-CN', { hour12: false })}] 浏览器空闲超 ${Math.round(BROWSER_IDLE_MS / 60000)} 分钟，已关闭释放内存（登录态存在 profile，下次自动复用）`);
 }
 setInterval(() => { closeIdleBrowser().catch(() => {}); }, 60000).unref();
 
