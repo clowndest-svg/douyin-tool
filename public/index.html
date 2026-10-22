@@ -231,11 +231,18 @@
         <span class="muted" id="quarkStatus">检查中…</span>
         <span class="spacer" style="flex:1"></span>
         <button class="ghost" id="btnQuarkCheck">测试连接</button>
-        <button class="ghost" id="btnQuarkOpen">打开夸克登录页</button>
+        <button id="btnQuarkQr">显示登录二维码</button>
         <button class="ghost" id="btnQuarkImport">从浏览器导入</button>
       </div>
+      <div id="quarkQrWrap" class="row" style="display:none;margin-top:12px;align-items:flex-start">
+        <div class="qr-box"><img id="quarkQrImg" alt="二维码加载中"></div>
+        <div style="flex:1;min-width:200px">
+          <div class="muted" id="quarkQrMsg">用「夸克网盘 App」或「夸克 App」的扫一扫扫这个码，然后在手机上点确认；本页会自动检测到登录并导入，不用你再点别的。</div>
+          <div class="row" style="margin-top:8px"><button class="ghost" id="btnQuarkQrRefresh">换一张码</button></div>
+        </div>
+      </div>
       <div class="muted" style="margin-top:8px">
-        连法一：点「打开夸克登录页」，在弹出的浏览器窗口里登录夸克网盘，再点「从浏览器导入」（需本机版；服务器是无头模式，弹不出窗口）。<br>
+        连法一（服务器也能用）：点「显示登录二维码」，用手机夸克 App 扫码即可。<br>
         连法二：自己在电脑浏览器登录 pan.quark.cn，按 F12 → Network → 找一条 <b>drive-pc.quark.cn</b> 请求 → 复制请求头里整串 <b>Cookie</b> 粘贴到下面。
       </div>
       <textarea class="cookie" id="quarkCookie" placeholder="__pus=...; __puus=..."></textarea>
@@ -919,7 +926,8 @@ async function loadQuarkStatus() {
     if (s.rootPath) $('quarkPath').value = s.rootPath;
     $('quarkStatus').innerHTML = s.loggedIn
       ? `<span class="ok">● 已连接</span> 根目录 ${s.rootCount} 项，Cookie 长度 ${s.cookieLen}`
-      : (s.configured ? `<span class="err">● Cookie 已失效：</span>${s.error}` : '○ 未连接：按下面两种方式之一登录');
+      : (s.browserLoggedIn ? '<span class="ok">● 浏览器已扫码，正在自动导入…</span>'
+        : (s.configured ? `<span class="err">● Cookie 已失效：</span>${s.error}` : '○ 未连接：点「显示登录二维码」用手机扫一下即可'));
     $('btnQuarkFold').textContent = s.loggedIn ? '夸克网盘：已连接，展开设置' : '夸克网盘：未连接，展开设置';
   } catch (e) {
     $('quarkStatus').innerHTML = '<span class="err">读取状态失败：' + e.message + '</span>';
@@ -997,16 +1005,59 @@ $('btnQuarkFold').onclick = () => {
   if (!open) loadQuarkStatus();
 };
 $('btnQuarkCheck').onclick = loadQuarkStatus;
-$('btnQuarkOpen').onclick = async () => {
-  $('quarkCookieMsg').textContent = '正在打开夸克网盘页面…';
+let quarkLoginPoll = null;
+function stopQuarkQr() {
+  if (quarkLoginPoll) { clearInterval(quarkLoginPoll); quarkLoginPoll = null; }
+}
+async function loadQuarkQr(fresh) {
+  const img = $('quarkQrImg');
+  img.style.display = '';
+  $('quarkQrMsg').textContent = '正在取二维码…';
   try {
-    const r = await api('/api/quark/open-login', { method: 'POST', body: '{}' });
-    $('quarkCookieMsg').textContent = r.hint;
-    if (r.headless) openQuarkBody();
+    const r = await fetch(withToken('/api/quark/qr' + (fresh ? '?fresh=1' : '')));
+    const ct = r.headers.get('content-type') || '';
+    if (r.ok && ct.indexOf('image') >= 0) {
+      const blob = await r.blob();
+      if (img.dataset.url) URL.revokeObjectURL(img.dataset.url);
+      img.dataset.url = URL.createObjectURL(blob);
+      img.src = img.dataset.url;
+      img.style.display = '';
+      $('quarkQrMsg').textContent = '用「夸克网盘 App」或「夸克 App」的扫一扫，然后在手机上点确认；本页会自动检测并导入。';
+    } else {
+      const j = await r.json().catch(() => ({ error: '二维码获取失败（HTTP ' + r.status + '）' }));
+      img.style.display = 'none';
+      $('quarkQrMsg').innerHTML = '<span class="err">' + (j.error || '二维码获取失败') + '</span>';
+    }
   } catch (e) {
-    $('quarkCookieMsg').innerHTML = '<span class="err">' + e.message + '</span>';
+    img.style.display = 'none';
+    $('quarkQrMsg').innerHTML = '<span class="err">' + e.message + '</span>';
   }
+}
+async function pollQuarkLogin() {
+  try {
+    const s = await api('/api/quark/status');
+    if (s.loggedIn) {
+      stopQuarkQr();
+      $('quarkQrWrap').style.display = 'none';
+      $('quarkCookieMsg').innerHTML = '<span class="ok">已连接夸克网盘</span>';
+      loadQuarkStatus();
+    } else if (s.browserLoggedIn) {
+      const r = await api('/api/quark/import', { method: 'POST', body: '{}' });
+      stopQuarkQr();
+      $('quarkQrWrap').style.display = 'none';
+      $('quarkCookieMsg').innerHTML = `<span class="ok">扫码成功，已导入登录态（网盘根目录 ${r.rootCount} 项）</span>`;
+      loadQuarkStatus();
+    }
+  } catch (e) { /* 下一轮再试 */ }
+}
+$('btnQuarkQr').onclick = async () => {
+  openQuarkBody();
+  $('quarkQrWrap').style.display = '';
+  await loadQuarkQr(true);
+  stopQuarkQr();
+  quarkLoginPoll = setInterval(pollQuarkLogin, 3000);
 };
+$('btnQuarkQrRefresh').onclick = () => loadQuarkQr(true);
 $('btnQuarkImport').onclick = async () => {
   $('quarkCookieMsg').textContent = '正在从浏览器读取…';
   try {

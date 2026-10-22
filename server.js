@@ -1545,14 +1545,61 @@ app.get('/api/status', (req, res) => {
   });
 });
 
+async function hasQuarkCookieInBrowser() {
+  if (!context) return false;
+  try {
+    const list = await context.cookies('https://pan.quark.cn');
+    return list.some((c) => c.name === '__pus' && String(c.value).length > 10);
+  } catch (e) {
+    return false;
+  }
+}
+
+function quarkCookieString(list) {
+  return list.map((c) => `${c.name}=${c.value}`).join('; ');
+}
+
+// 夸克落地页本身就有一张登录二维码，无头浏览器也能截出来给用户扫
+async function getQuarkQr(forceReload) {
+  await ensureBrowser();
+  if (!page || page.isClosed()) page = context.pages()[0] || await context.newPage();
+  if (forceReload || !page.url().startsWith('https://pan.quark.cn')) {
+    await page.goto('https://pan.quark.cn/', { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(3000);
+  }
+  if (await hasQuarkCookieInBrowser()) return { error: '浏览器里已经是登录状态，直接点「从浏览器导入」' };
+  const handle = await page.evaluateHandle(() => {
+    const nodes = [...document.querySelectorAll('canvas, img')].filter((el) => {
+      const r = el.getBoundingClientRect();
+      if (r.width < 90 || r.height < 90) return false;
+      let n = el;
+      for (let d = 0; d < 7 && n; d++) {
+        n = n.parentElement;
+        if (n && /扫码登录/.test(n.textContent || '')) return true;
+      }
+      return false;
+    });
+    return nodes[0] || null;
+  }).catch(() => null);
+  const el = handle && handle.asElement ? handle.asElement() : null;
+  if (!el) {
+    return { error: '夸克登录页这次没出二维码（可能被风控或页面改版）。请改用「粘贴 Cookie」。' };
+  }
+  const buf = await el.screenshot({ type: 'png' });
+  return { buf };
+}
+
 app.get('/api/quark/status', async (req, res) => {
   const info = quarkInfo();
-  if (!info.hasCookie) return res.json({ configured: false, loggedIn: false, browserOpen: !!context, rootPath: info.rootPath });
+  const browserLoggedIn = await hasQuarkCookieInBrowser();
+  if (!info.hasCookie) {
+    return res.json({ configured: false, loggedIn: false, browserLoggedIn, browserOpen: !!context, rootPath: info.rootPath });
+  }
   try {
     const r = await quark.checkCookie(getQuarkCookie());
-    res.json({ configured: true, loggedIn: true, rootCount: r.rootCount, cookieLen: info.cookieLen, rootPath: info.rootPath, browserOpen: !!context });
+    res.json({ configured: true, loggedIn: true, rootCount: r.rootCount, cookieLen: info.cookieLen, rootPath: info.rootPath, browserLoggedIn, browserOpen: !!context });
   } catch (e) {
-    res.json({ configured: true, loggedIn: false, error: e.message, rootPath: info.rootPath, browserOpen: !!context });
+    res.json({ configured: true, loggedIn: false, error: e.message, rootPath: info.rootPath, browserLoggedIn, browserOpen: !!context });
   }
 });
 
@@ -1570,6 +1617,17 @@ app.post('/api/quark/cookie', (req, res) => {
   });
 });
 
+app.get('/api/quark/qr', async (req, res) => {
+  try {
+    const r = await getQuarkQr(req.query.fresh === '1');
+    if (r.error) return res.status(409).json({ error: r.error });
+    res.set('Cache-Control', 'no-store');
+    res.type('png').send(r.buf);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.post('/api/quark/open-login', async (req, res) => {
   try {
     await ensureBrowser();
@@ -1578,7 +1636,7 @@ app.post('/api/quark/open-login', async (req, res) => {
       ok: true,
       headless: HEADLESS,
       hint: HEADLESS
-        ? '服务器是无头模式，弹不出窗口：请直接在电脑本机版登录，或用「粘贴 Cookie」'
+        ? '服务器是无头模式，弹不出窗口：请直接用「显示登录二维码」扫码，或「粘贴 Cookie」'
         : '在打开的浏览器窗口里登录夸克网盘，登录完成后回来点「从浏览器导入」',
     });
   } catch (e) {
@@ -1587,12 +1645,12 @@ app.post('/api/quark/open-login', async (req, res) => {
 });
 
 app.post('/api/quark/import', async (req, res) => {
-  if (!context) return res.status(400).json({ error: '浏览器还没打开：先点「打开夸克登录页」并登录' });
+  if (!context) return res.status(400).json({ error: '浏览器还没打开：先点「显示登录二维码」扫一次码' });
   try {
     const list = await context.cookies('https://pan.quark.cn');
-    const cookie = list.map((c) => `${c.name}=${c.value}`).join('; ');
+    const cookie = quarkCookieString(list);
     if (!/(^|; )__pus=/.test(cookie)) {
-      return res.status(400).json({ error: '浏览器里没有夸克登录凭证（__pus），说明还没登录成功' });
+      return res.status(400).json({ error: '浏览器里还没有夸克登录凭证（__pus），说明还没扫码/登录成功' });
     }
     const r = await quark.checkCookie(cookie);
     appConfig.quark = Object.assign({}, appConfig.quark, { cookie });
