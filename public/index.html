@@ -189,11 +189,17 @@
 
   <div class="panel">
     <div class="row">
-      <span class="muted" style="white-space:nowrap">保存目录</span>
+      <span class="muted" style="white-space:nowrap" id="saveDirLabel">保存目录</span>
       <input type="text" id="saveDir" placeholder="D:\视频" style="flex:1">
       <button class="ghost" id="btnPickDir">选择目录</button>
       <button id="btnSaveDir">保存</button>
     </div>
+    <div class="row" id="fsaRowTop" style="display:none;margin-top:10px">
+      <span class="muted" style="white-space:nowrap">存到本机</span>
+      <button class="ghost" id="btnFsaTop">选本机文件夹，直接写入…</button>
+      <span class="muted" id="fsaNameTop">未选择任何文件夹</span>
+    </div>
+    <div class="hint" id="saveDirHint" style="display:none;margin-top:6px"></div>
     <div id="dirPick" style="display:none;margin-top:8px;background:#0c0e12;border:1px solid var(--line);border-radius:10px;padding:10px">
       <div class="row">
         <input type="text" id="dirPath" style="flex:1">
@@ -1430,6 +1436,11 @@ function setTarget(t) {
     b.textContent = targetLabel(b.dataset.t);
   });
   $('planDirLabel').textContent = local ? '电脑目录' : '服务器目录';
+  $('saveDirLabel').textContent = local ? '保存目录' : '服务器保存目录';
+  const dHint = local ? '' : '这行是服务器上的路径（不是你电脑）。要存到你自己的电脑：点下面「选本机文件夹，直接写入…」，或在导出方案里选「下载到本机」/勾「合成一个压缩包」。';
+  $('saveDirHint').textContent = dHint;
+  $('saveDirHint').style.display = dHint ? '' : 'none';
+  setFsaUI();
   $('planLocalRow').style.display = t === 'local' ? '' : 'none';
   $('fsaRow').style.display = (t === 'local' && window.showDirectoryPicker) ? '' : 'none';
   $('planPhoneRow').style.display = t === 'phone' ? '' : 'none';
@@ -1477,16 +1488,32 @@ $('btnPlanDir').onclick = async () => {
   browseDirs($('saveDir').value.trim());
   $('saveDir').scrollIntoView({ behavior: 'smooth', block: 'center' });
 };
-$('btnFsa').onclick = async () => {
+$('btnFsa').onclick = () => pickLocalDir();
+$('btnFsaTop').onclick = () => pickLocalDir();
+async function pickLocalDir() {
   try {
     dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
-    $('fsaName').textContent = '已选本机文件夹：' + dirHandle.name;
+    setFsaUI();
   } catch (e) {
     dirHandle = null;
-    $('fsaName').textContent = '未选择（你取消了，或浏览器不允许）';
+    setFsaUI(e && e.name === 'AbortError' ? '已取消选择' : '浏览器不允许选择文件夹：' + (e.message || ''));
   }
   updatePlan();
-};
+}
+function setFsaUI(msg) {
+  const supported = typeof window.showDirectoryPicker === 'function';
+  $('fsaRowTop').style.display = supported ? '' : 'none';
+  const text = msg || (dirHandle ? '已选本机文件夹：' + dirHandle.name : '未选择任何文件夹');
+  $('fsaNameTop').textContent = text;
+  $('fsaName').textContent = text;
+  if (dirHandle) {
+    $('btnFsaTop').textContent = '更换本机文件夹…';
+    $('btnFsa').textContent = '更换本机文件夹…';
+  } else {
+    $('btnFsaTop').textContent = '选本机文件夹，直接写入…';
+    $('btnFsa').textContent = '选本机文件夹，直接写入…';
+  }
+}
 async function writeToDirHandle(names) {
   let n = 0;
   for (const rel of names) {
