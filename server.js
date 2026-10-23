@@ -660,6 +660,7 @@ async function fetchVideos(secUid, opts = {}) {
   let stagnant = 0;
   for (let pass = 0; pass < maxPasses; pass++) {
     if (pass > 0) {
+      if (!page || page.isClosed()) break;
       await page.reload({ waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
       await page.waitForTimeout(4000);
       hasMore = true;
@@ -668,6 +669,9 @@ async function fetchVideos(secUid, opts = {}) {
     let guard = 0;
     while (hasMore && guard < 150) {
       if (maxNew && map.size >= maxNew) break;
+      if (!page || page.isClosed()) {
+        throw new Error('抓取中途浏览器被系统回收（服务器内存不足），已拿到的数据不保留，请重试；必要时调低每批数量');
+      }
       const before = map.size;
       if (guard % 5 === 4) {
         await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight)).catch(() => {});
