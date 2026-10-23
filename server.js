@@ -970,12 +970,37 @@ function parseYtdlpPaths(out) {
   for (const line of String(out || '').split('\n')) {
     let m = /\[download\] Destination: (.+?)\s*$/m.exec(line);
     if (!m) m = /\[download\] File "([^"]+)" has already been downloaded/m.exec(line);
+    if (!m) { const mm = /\[Merger\] Merging formats into "(.+?)"\s*$/m.exec(line); if (mm) m = [, mm[1]]; }
     if (m) {
       const p = m[1].trim();
       if (p && fs.existsSync(p)) found.push(p);
     }
   }
   return found;
+}
+
+// yt-dlp 的 Destination 打的是合并前的临时流文件（.f395.mp4），合并完就被删，
+// 所以产出要靠"跑前后目录快照对比"，不能只信它的输出行
+function snapshotDir(dir) {
+  const out = new Map();
+  let names;
+  try { names = fs.readdirSync(dir); } catch (e) { return out; }
+  for (const f of names) {
+    try {
+      const st = fs.statSync(path.join(dir, f));
+      if (st.isFile()) out.set(f, st.mtimeMs);
+    } catch (e) { /* 忽略单个文件 */ }
+  }
+  return out;
+}
+
+function diffSnapshot(dir, before) {
+  const added = [];
+  for (const [f, mt] of snapshotDir(dir)) {
+    if (f.endsWith('.part') || f.endsWith('.ytdl')) continue;
+    if (!before.has(f) || before.get(f) !== mt) added.push(path.join(dir, f));
+  }
+  return added;
 }
 
 async function runYtdlpDownload(urls, title, quality, opts) {
@@ -1003,6 +1028,7 @@ async function runYtdlpDownload(urls, title, quality, opts) {
     }
     downloadState.current = url;
     try {
+      const before = snapshotDir(dir);
       const out = await withRetry(() => runYtdlp([
         ...ytdlpBaseArgs(),
         '-f', format,
@@ -1013,8 +1039,13 @@ async function runYtdlpDownload(urls, title, quality, opts) {
         '-o', path.join(dir, '%(upload_date)s_%(title).80s_%(id)s.%(ext)s'),
         url,
       ]), safe ? 1 : 2);
-      for (const p of parseYtdlpPaths(out)) downloadState.produced.push(relToRoot(p));
-      if (out.includes('has already been downloaded')) {
+      const fresh = diffSnapshot(dir, before);
+      const seen = new Set(fresh);
+      for (const p of parseYtdlpPaths(out)) {
+        if (!seen.has(p)) { fresh.push(p); seen.add(p); }
+      }
+      for (const p of fresh) downloadState.produced.push(relToRoot(p));
+      if (out.includes('has already been downloaded') && !fresh.length) {
         downloadState.skipped += 1;
         downloadState.done += 1;
         pushLog(`跳过已存在: ${url}`);
