@@ -2,7 +2,7 @@
 # 生成自签 TLS 证书：只有 https（或 localhost）浏览器才允许网页「选择本机文件夹直接写入」
 set -e
 IP="${1:-124.220.54.64}"
-DIR="$(cd "$(dirname "$0")/.." && pwd)/certs"
+DIR="${CERT_DIR:-$PWD/certs}"
 mkdir -p "$DIR"
 openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
   -keyout "$DIR/server.key" -out "$DIR/server.crt" \
