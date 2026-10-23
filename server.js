@@ -628,16 +628,22 @@ async function searchUser(douyinId) {
   };
 }
 
-async function fetchVideos(secUid) {
+async function fetchVideos(secUid, opts = {}) {
+  const seen = new Set((opts.seen || []).map(String));
+  const maxNew = Number(opts.maxNew) > 0 ? Number(opts.maxNew) : 0;
   if (!page || page.isClosed()) page = context.pages()[0] || await context.newPage();
-  const collected = [];
+  const map = new Map();
   let hasMore = true;
 
   const onResponse = async (r) => {
     if (!r.url().includes('/aweme/post/')) return;
     try {
       const j = await r.json();
-      if (Array.isArray(j.aweme_list)) collected.push(...j.aweme_list);
+      if (Array.isArray(j.aweme_list)) {
+        for (const v of j.aweme_list) {
+          if (v && v.aweme_id && !seen.has(String(v.aweme_id))) map.set(v.aweme_id, v);
+        }
+      }
       if (typeof j.has_more === 'boolean') hasMore = j.has_more;
     } catch (e) { /* ignore */ }
   };
@@ -647,26 +653,44 @@ async function fetchVideos(secUid) {
   await page.goto(`https://www.douyin.com/user/${secUid}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
   await page.waitForTimeout(4000);
 
-  let guard = 0;
+  // 抖音的瀑布流偶尔会"卡住不给下一页"，靠重载一次往往能续上；
+  // 安全模式下只跑一趟（每次都少拿点），普通模式最多再来一趟补全
+  const maxPasses = maxNew ? 1 : 2;
+  let stall = false;
   let stagnant = 0;
-  while (hasMore && guard < 150) {
-    const before = collected.length;
-    await page.evaluate(() => window.scrollBy(0, Math.max(600, Math.round(window.innerHeight * 0.9)))).catch(() => {});
-    await page.waitForTimeout(1800);
-    if (collected.length === before) stagnant += 1; else stagnant = 0;
-    if (stagnant >= 10) break;
-    guard += 1;
+  for (let pass = 0; pass < maxPasses; pass++) {
+    if (pass > 0) {
+      await page.reload({ waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+      await page.waitForTimeout(4000);
+      hasMore = true;
+      stagnant = 0;
+    }
+    let guard = 0;
+    while (hasMore && guard < 150) {
+      if (maxNew && map.size >= maxNew) break;
+      const before = map.size;
+      if (guard % 5 === 4) {
+        await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight)).catch(() => {});
+      } else {
+        await page.evaluate(() => window.scrollBy(0, Math.max(600, Math.round(window.innerHeight * 0.9)))).catch(() => {});
+      }
+      await page.waitForTimeout(1800);
+      if (map.size === before) stagnant += 1; else stagnant = 0;
+      if (stagnant >= 20) break;
+      guard += 1;
+    }
+    if (!hasMore) break;
+    if (maxNew && map.size >= maxNew) break;
+    stall = stagnant >= 20;
   }
   page.off('response', onResponse);
-  if (hasMore && collected.length) {
-    pushLog(`注意：抖音仍标记「还有更多」，但连续 10 次滚动没拿到新数据，列表可能不完整（已抓 ${collected.length} 条）`);
+  if (stall) {
+    pushLog(`注意：抖音仍标记「还有更多」，但连续 20 次滚动都没新数据（含重载补抓），本次只拿到 ${map.size} 条`);
   }
 
-  const map = new Map();
-  for (const v of collected) {
-    if (v && v.aweme_id) map.set(v.aweme_id, v);
-  }
-  return [...map.values()].map(normalize);
+  const videos = [...map.values()].slice(0, maxNew || undefined).map(normalize);
+  const likelyMore = hasMore && !stall && (!maxNew || map.size >= maxNew);
+  return { videos, exhausted: !likelyMore };
 }
 
 function normalize(v) {
@@ -1581,8 +1605,10 @@ app.post('/api/login/password', async (req, res) => {
 
 app.post('/api/user', async (req, res) => {
   if (busy) return res.status(409).json({ error: '上一个任务还在执行，请稍候' });
-  const douyinId = String((req.body && req.body.douyinId) || '').trim();
-  if (!/^[A-Za-z0-9_.-]{3,40}$/.test(douyinId)) {
+  const body = req.body || {};
+  const douyinId = String(body.douyinId || '').trim();
+  const isContinue = !!body.continue && !!currentUser && !!currentUser.sec_uid;
+  if (!isContinue && !/^[A-Za-z0-9_.-]{3,40}$/.test(douyinId)) {
     return res.status(400).json({ error: '抖音号格式不正确' });
   }
   busy = true;
@@ -1592,13 +1618,26 @@ app.post('/api/user', async (req, res) => {
     if (!login.loggedIn) {
       return res.status(401).json({ error: '未登录抖音，请先点“打开登录窗口”扫码登录' });
     }
-    const user = await searchUser(douyinId);
-    const videos = await fetchVideos(user.sec_uid);
-    currentUser = user;
-    currentVideos = videos;
+    const user = isContinue ? currentUser : await searchUser(douyinId);
+    const seen = isContinue
+      ? (Array.isArray(body.seen) && body.seen.length ? body.seen.map(String) : currentVideos.map((v) => v.aweme_id))
+      : [];
+    // 安全模式：每次只抓一小批，避免一次翻到底；普通模式抓全量
+    const safe = getSafeMode();
+    const batch = safe ? Math.max(1, Number(process.env.SAFE_FETCH_COUNT) || 36) : 0;
+    const r = await fetchVideos(user.sec_uid, { seen, maxNew: batch });
+    const videos = r.videos;
+    if (isContinue) currentVideos = currentVideos.concat(videos);
+    else {
+      currentUser = user;
+      currentVideos = videos;
+    }
     const dir = path.join(getDownloadRoot(), sanitize(user.nickname, 40));
     res.json({
       user,
+      exhausted: r.exhausted,
+      mode: safe ? 'safe' : 'all',
+      batchLimit: batch,
       videos: videos.map(v => ({
         aweme_id: v.aweme_id,
         desc: v.desc,
@@ -1651,6 +1690,70 @@ app.post('/api/download', async (req, res) => {
   }
   runDownload(items, { target, quarkPath: body.quarkPath, types: body.types, pack: !!body.pack, remote: !isLocalReq(req) }).catch(e => pushLog('下载任务异常：' + e.message));
   res.json({ started: true, count: items.length, target });
+});
+
+// 小红书主页批量：用登录态在浏览器里滚动，截 user_posted 接口，逐条交给 yt-dlp 下载
+async function fetchXhsNotes(profileUrl, maxNotes) {
+  await ensureBrowser();
+  if (!page || page.isClosed()) page = context.pages()[0] || await context.newPage();
+  const notes = new Map();
+  const onResponse = async (r) => {
+    if (!r.url().includes('/api/sns/web/v1/user_posted')) return;
+    try {
+      const j = await r.json();
+      const list = (j && j.data && j.data.notes) || [];
+      for (const n of list) if (n && n.note_id) notes.set(n.note_id, n);
+    } catch (e) { /* 非 JSON 忽略 */ }
+  };
+  page.on('response', onResponse);
+  await page.bringToFront().catch(() => {});
+  await page.goto(profileUrl, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+  await page.waitForTimeout(3500);
+  let stagnant = 0;
+  let guard = 0;
+  const max = Number(maxNotes) > 0 ? Number(maxNotes) : 500;
+  while (guard < 120 && notes.size < max) {
+    const before = notes.size;
+    await page.evaluate(() => window.scrollBy(0, Math.max(600, Math.round(window.innerHeight * 0.9)))).catch(() => {});
+    await page.waitForTimeout(1600);
+    if (notes.size === before) stagnant += 1; else stagnant = 0;
+    if (stagnant >= 8) break;
+    guard += 1;
+  }
+  page.off('response', onResponse);
+  return [...notes.values()].slice(0, max);
+}
+
+app.post('/api/xhs/user', async (req, res) => {
+  const url = String((req.body && req.body.url) || '').trim();
+  if (!/^https?:\/\/.*xiaohongshu\.com\/user\/profile\//i.test(url)) {
+    return res.status(400).json({ error: '小红书只认主页链接，例如 https://www.xiaohongshu.com/user/profile/xxxx' });
+  }
+  if (busy) return res.status(409).json({ error: '上一个任务还在执行，请稍候' });
+  busy = true;
+  try {
+    await ensureBrowser();
+    const st = await platformLoginStatus();
+    if (!st.xiaohongshu || !st.xiaohongshu.loggedIn) {
+      return res.status(401).json({ error: '小红书未登录：先在工具里打开并登录小红书（登录后保持「使用浏览器 cookies」开启），再回来获取' });
+    }
+    const notes = await fetchXhsNotes(url, Number(process.env.XHS_MAX) || 500);
+    if (!notes.length) {
+      return res.status(404).json({ error: '没抓到笔记：可能主页链接不对、账号已注销，或小红书限制了未登录/异常访问' });
+    }
+    const entries = notes.map((n) => ({
+      id: n.note_id,
+      title: (n.display_title || n.title || '').trim() || ('小红书笔记 ' + n.note_id),
+      url: 'https://www.xiaohongshu.com/explore/' + n.note_id + (n.xsec_token ? ('?xsec_token=' + encodeURIComponent(n.xsec_token) + '&xsec_source=pc_user') : ''),
+      duration: 0,
+      thumbnail: (n.cover && (n.cover.url_default || n.cover.url_pre)) || '',
+    }));
+    res.json({ title: '小红书主页（' + entries.length + ' 条笔记）', entries });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  } finally {
+    busy = false;
+  }
 });
 
 app.post('/api/url/resolve', async (req, res) => {

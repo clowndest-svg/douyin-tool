@@ -267,6 +267,7 @@
     <div class="toolbar">
       <button class="ghost" id="btnAll">全选</button>
       <button class="ghost" id="btnNone">取消全选</button>
+      <button class="ghost" id="btnMore" style="display:none">继续获取更多</button>
       <span class="muted" id="selInfo">已选 0 / 0</span>
       <span class="spacer"></span>
       <span class="muted" id="pageInfo">-</span>
@@ -680,12 +681,14 @@ $('btnFetch').onclick = async () => {
     return;
   }
   $('btnFetch').disabled = true;
+  $('btnMore').style.display = 'none';
   $('msg').textContent = mode === 'douyin'
     ? '正在搜索博主并抓取作品列表，首次可能需要 30~60 秒…'
     : '正在解析 ' + targetUrl + '（首次可能需要 10~60 秒）…';
   try {
     if (mode !== 'douyin') {
-      const data = await api('/api/url/resolve', { method: 'POST', body: JSON.stringify({ url: targetUrl, platform: mode }) });
+      const apiPath = mode === 'xiaohongshu' ? '/api/xhs/user' : '/api/url/resolve';
+      const data = await api(apiPath, { method: 'POST', body: JSON.stringify({ url: targetUrl, platform: mode }) });
       state.user = {
         nickname: data.title || '通用下载',
         douyin_id: targetUrl,
@@ -720,7 +723,13 @@ $('btnFetch').onclick = async () => {
     $('userPanel').style.display = '';
     $('listPanel').style.display = '';
     $('dlPanel').style.display = '';
-    $('msg').innerHTML = `<span class="ok">已获取 ${state.videos.length} 条</span>` + (data.truncated ? '（超过 2000 条只列前 2000 条）' : '');
+    state.exhausted = data.exhausted !== false;
+    refreshMoreBtn();
+    const modeNote = data.mode === 'safe'
+      ? `（安全模式每批最多 ${data.batchLimit} 条，抓完点「继续获取更多」接着拿；关掉安全模式可一次全量）`
+      : '';
+    $('msg').innerHTML = `<span class="ok">已获取 ${state.videos.length} 条</span>`
+      + (data.truncated ? '（超过 2000 条只列前 2000 条）' : '') + modeNote;
     refreshStatus();
   } catch (e) {
     $('msg').innerHTML = '<span class="err">' + e.message + '</span>';
@@ -1650,6 +1659,35 @@ function updatePlan() {
   $('planTechHint').style.display = th ? '' : 'none';
 }
 [...$('targetSeg').children].forEach((b) => { b.onclick = () => setTarget(b.dataset.t); });
+function refreshMoreBtn() {
+  const show = state.mode === 'douyin' && state.videos.length > 0 && state.exhausted === false;
+  $('btnMore').style.display = show ? '' : 'none';
+}
+$('btnMore').onclick = async () => {
+  if (!state.videos.length) return;
+  $('btnMore').disabled = true;
+  $('msg').textContent = '正在继续抓取下一批（安全模式，避免一次翻太多）…';
+  try {
+    const data = await api('/api/user', {
+      method: 'POST',
+      body: JSON.stringify({ continue: true, seen: state.videos.map((v) => v.aweme_id) }),
+    });
+    const known = new Set(state.videos.map((v) => v.aweme_id));
+    const add = (data.videos || []).filter((v) => !known.has(v.aweme_id));
+    state.videos = state.videos.concat(add);
+    state.selected = new Set(state.videos.map((v) => v.aweme_id));
+    state.exhausted = data.exhausted !== false;
+    renderList();
+    refreshMoreBtn();
+    $('msg').innerHTML = `<span class="ok">新增 ${add.length} 条，共 ${state.videos.length} 条</span>`
+      + (state.exhausted ? '（已到末尾）' : '，还有更多可继续拿');
+  } catch (e) {
+    $('msg').innerHTML = '<span class="err">' + e.message + '</span>';
+  } finally {
+    $('btnMore').disabled = false;
+  }
+};
+
 $('btnStart').onclick = () => startExport([...state.selected]);
 
 // 先拿到 config（判断本机/远程）再渲染，否则远程页面会闪一下"服务器目录"
