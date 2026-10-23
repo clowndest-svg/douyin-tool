@@ -1679,8 +1679,12 @@ $('btnMore').onclick = async () => {
     state.exhausted = data.exhausted !== false;
     renderList();
     refreshMoreBtn();
-    $('msg').innerHTML = `<span class="ok">新增 ${add.length} 条，共 ${state.videos.length} 条</span>`
-      + (state.exhausted ? '（已到末尾）' : '，还有更多可继续拿');
+    if (!add.length && !state.exhausted) {
+      $('msg').innerHTML = '<span class="hint warn">这次没拿到新作品（抖音可能限流或页面卡住），等几十秒再点「继续获取更多」；抖音后台显示的条数不一定是真实总数</span>';
+    } else {
+      $('msg').innerHTML = `<span class="ok">新增 ${add.length} 条，共 ${state.videos.length} 条</span>`
+        + (state.exhausted ? '（已到末尾）' : '，还有更多可继续拿');
+    }
   } catch (e) {
     $('msg').innerHTML = '<span class="err">' + e.message + '</span>';
   } finally {

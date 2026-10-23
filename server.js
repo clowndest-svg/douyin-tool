@@ -650,12 +650,15 @@ async function fetchVideos(secUid, opts = {}) {
 
   page.on('response', onResponse);
   await page.bringToFront().catch(() => {});
-  await page.goto(`https://www.douyin.com/user/${secUid}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
-  await page.waitForTimeout(4000);
+  const stayOnPage = !!opts.keepPage && page.url().includes(secUid);
+  if (!stayOnPage) {
+    await page.goto(`https://www.douyin.com/user/${secUid}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(4000);
+  }
 
   // 抖音的瀑布流偶尔会"卡住不给下一页"，靠重载一次往往能续上；
   // 安全模式下只跑一趟（每次都少拿点），普通模式最多再来一趟补全
-  const maxPasses = maxNew ? 1 : 2;
+  const maxPasses = 2;
   let stall = false;
   let stagnant = 0;
   for (let pass = 0; pass < maxPasses; pass++) {
@@ -693,8 +696,7 @@ async function fetchVideos(secUid, opts = {}) {
   }
 
   const videos = [...map.values()].slice(0, maxNew || undefined).map(normalize);
-  const likelyMore = hasMore && !stall && (!maxNew || map.size >= maxNew);
-  return { videos, exhausted: !likelyMore };
+  return { videos, exhausted: !hasMore, stalled: stall };
 }
 
 function normalize(v) {
@@ -1629,7 +1631,7 @@ app.post('/api/user', async (req, res) => {
     // 安全模式：每次只抓一小批，避免一次翻到底；普通模式抓全量
     const safe = getSafeMode();
     const batch = safe ? Math.max(1, Number(process.env.SAFE_FETCH_COUNT) || 36) : 0;
-    const r = await fetchVideos(user.sec_uid, { seen, maxNew: batch });
+    const r = await fetchVideos(user.sec_uid, { seen, maxNew: batch, keepPage: false });
     const videos = r.videos;
     if (isContinue) currentVideos = currentVideos.concat(videos);
     else {
@@ -1640,6 +1642,7 @@ app.post('/api/user', async (req, res) => {
     res.json({
       user,
       exhausted: r.exhausted,
+      stalled: !!r.stalled,
       mode: safe ? 'safe' : 'all',
       batchLimit: batch,
       videos: videos.map(v => ({
