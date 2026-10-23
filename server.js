@@ -1919,7 +1919,16 @@ function cleanupProduced(names) {
         removed.push(n);
       }
       const dir = path.dirname(abs);
-      try { if (fs.readdirSync(dir).length === 0) fs.rmdirSync(dir); } catch (e) { /* 非空或已删 */ }
+      // 逐级向上删空目录，别在服务器上留下空壳
+      let cur = dir;
+      const root = path.resolve(getDownloadRoot());
+      while (cur.startsWith(root + path.sep)) {
+        try {
+          if (fs.readdirSync(cur).length !== 0) break;
+          fs.rmdirSync(cur);
+        } catch (e) { break; }
+        cur = path.dirname(cur);
+      }
     } catch (e) { /* 忽略单个文件 */ }
   }
   return removed;
