@@ -37,7 +37,7 @@ children.push(new Paragraph({
 children.push(new Paragraph({
   alignment: AlignmentType.CENTER,
   spacing: { after: 320 },
-  children: [new TextRun({ text: '使用说明  ·  版本 1.8  ·  2026-10-23', font: FONT, size: 20, color: '666666' })],
+  children: [new TextRun({ text: '使用说明  ·  版本 1.9  ·  2026-10-23', font: FONT, size: 20, color: '666666' })],
 }));
 
 children.push(h('一、这是什么'));
@@ -77,15 +77,16 @@ children.push(li('不需要先下载到服务器再去文件列表里二次勾�
 children.push(li('文件按类型分三个子文件夹存：博主昵称/图片（图集静态图）、博主昵称/动态图（Live Photo 的 mp4）、博主昵称/视频（普通视频）；打包时压缩包内也保留这三个分类。'));
 children.push(li('已下载的作品会显示「已下载」，重复下载会自动跳过（旧版平铺存放的文件也能认出来，不会重复下一遍）。'));
 
-children.push(h('五、通用链接下载（YouTube / TikTok / X / 小红书）'));
-children.push(li('平台选择「通用链接」。'));
-children.push(li('粘贴作品链接或主页链接，例如 https://www.youtube.com/@频道 。'));
-children.push(li('点「获取视频」，工具会用 yt-dlp 解析列表。'));
-children.push(li('选择清晰度：最佳 / 4K / 1080p / 720p / 480p / 360p / 仅音频。'));
+children.push(h('五、按账号批量：YouTube / TikTok / X / 小红书'));
+children.push(li('平台下拉里分别有「YouTube 频道」「TikTok 主页」「小红书主页」「X（推特）主页」，输入账号或主页链接即可，不用非得粘贴作品链接。'));
+children.push(li('YouTube：填 @账号（例如 @jawed）或频道链接，会列出该频道全部作品；TikTok：填 @账号（例如 @tiktok）或主页链接，会列出主页作品（实测某账号 1475 条）。'));
+children.push(li('小红书只认主页链接（https://www.xiaohongshu.com/user/profile/xxxx）；X 填 @账号 或主页链接。'));
+children.push(li('能力边界（实测）：抖音、YouTube、TikTok 支持「账号 → 全部作品」；X 与小红书目前平台侧不支持主页批量（yt-dlp 拉不到列表），请用单条作品链接，工具会直说原因，不会假装列出来了。'));
+children.push(li('列表有分页：每页可选 50 / 100 / 200 条，翻页不影响勾选，点「全选」是跨页全选（例如 250 条一次勾上）。'));
 children.push(li('勾选后同样走「导出方案」：内容类型变成 视频 / 音频 两个开关，去向、打包、停止和抖音完全一致。'));
 children.push(li('文件保存到「下载目录/平台/标题/视频/」或「/音频/」下，打包时压缩包内保留这层结构。'));
 children.push(li('需要登录的内容（TikTok/X/小红书）：先在工具浏览器里登录对应平台，并保持「使用浏览器 cookies」开启。'));
-children.push(li('小红书主页批量受平台限制，条目可能不全；单个作品链接最稳。'));
+children.push(li('清晰度：最佳 / 4K / 1080p / 720p / 480p / 360p / 仅音频。'));
 
 children.push(h('六、关于清晰度'));
 children.push(li('清晰度只对通用链接生效；抖音作品使用原始地址。'));
@@ -182,6 +183,7 @@ children.push(h('十四、免责声明'));
 children.push(text('本工具仅用于个人学习、备份已公开内容。请遵守抖音及各平台的用户协议，不要用于商业用途、二次传播、绕过付费或私密内容。批量下载可能导致账号限流或封禁，风险由使用者承担。工具不收集、不上传任何账号信息，cookies 仅保存在本机。'));
 
 children.push(h('版本记录'));
+children.push(li('1.9：平台下拉拆出 YouTube/TikTok/小红书/X 按账号搜索；列表分页（每页 50/100/200，全选跨页）；抖音尽量抓到全部作品；线上服务器不留存任何文件（导出完成自动清理）。'));
 children.push(li('1.8：YouTube/TikTok/X/小红书 与抖音共用同一套导出方案（视频/音频开关、分文件夹、打包、停止）；去向按设备自动限制；新增可选 HTTPS 以解锁"选本机文件夹直接写入"；修好通用链接产出登记（此前打包/下载到本机拿不到文件）。'));
 children.push(li('1.7：导出方案卡片（导出前就选内容类型 / 去向 / 是否打包，一步到位）；下载与上传进度改为带动画的进度卡；「选择目录」改为页面内浏览（服务器上也能用）；非 HTTPS 下复制地址加兜底。'));
 children.push(li('1.6：夸克网盘连接/指定路径上传/打包 zip 上传；下载去向电脑·手机相册·网盘三选一；App 直接写相册（不再依赖系统下载服务）。'));

@@ -176,7 +176,11 @@
     <div class="row" style="margin-bottom:8px">
       <select id="platform" style="background:#0c0e12;border:1px solid var(--line);color:var(--text);border-radius:8px;padding:9px 11px">
         <option value="douyin">抖音主页（按抖音号）</option>
-        <option value="url">通用链接（YouTube / TikTok / X / 小红书等）</option>
+        <option value="youtube">YouTube 频道（@账号 或链接）</option>
+        <option value="tiktok">TikTok 主页（@账号 或链接）</option>
+        <option value="xiaohongshu">小红书主页（粘贴主页链接）</option>
+        <option value="x">X（推特）主页（@账号 或链接）</option>
+        <option value="url">通用链接（任意作品 / 主页链接）</option>
       </select>
       <span class="muted" id="platformHint">主页批量，需先登录抖音</span>
     </div>
@@ -188,7 +192,7 @@
   </div>
 
   <div class="panel">
-    <div class="row">
+    <div class="row" id="saveRow">
       <span class="muted" style="white-space:nowrap" id="saveDirLabel">保存目录</span>
       <input type="text" id="saveDir" placeholder="D:\视频" style="flex:1">
       <button class="ghost" id="btnPickDir">选择目录</button>
@@ -200,6 +204,7 @@
       <span class="muted" id="fsaNameTop">未选择任何文件夹</span>
     </div>
     <div class="hint" id="saveDirHint" style="display:none;margin-top:6px"></div>
+    <div class="hint ok" id="serverStoreHint" style="display:none;margin-top:8px"></div>
     <div id="dirPick" style="display:none;margin-top:8px;background:#0c0e12;border:1px solid var(--line);border-radius:10px;padding:10px">
       <div class="row">
         <input type="text" id="dirPath" style="flex:1">
@@ -264,6 +269,14 @@
       <button class="ghost" id="btnNone">取消全选</button>
       <span class="muted" id="selInfo">已选 0 / 0</span>
       <span class="spacer"></span>
+      <span class="muted" id="pageInfo">-</span>
+      <select id="pageSize" style="background:#0c0e12;border:1px solid var(--line);color:var(--text);border-radius:8px;padding:7px 9px">
+        <option value="50">每页 50</option>
+        <option value="100" selected>每页 100</option>
+        <option value="200">每页 200</option>
+      </select>
+      <button class="ghost" id="btnPrevPage">上一页</button>
+      <button class="ghost" id="btnNextPage">下一页</button>
       <button class="ghost" id="btnCsv">导出列表 CSV</button>
     </div>
 
@@ -434,7 +447,8 @@ const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
 if (params.get('token')) localStorage.setItem('dy_token', params.get('token'));
 const TOKEN = localStorage.getItem('dy_token') || '';
-let state = { user: null, videos: [], selected: new Set(), loggedIn: false, config: null, mode: 'douyin', target: 'local', files: [], fileSelected: new Set(), quark: null, types: { image: true, live: true, video: true, audio: false }, pack: false };
+let state = { user: null, videos: [], selected: new Set(), loggedIn: false, config: null, mode: 'douyin', target: 'local', files: [], fileSelected: new Set(), quark: null, types: { image: true, live: true, video: true, audio: false }, pack: false, page: 1, pageSize: 100 };
+function usesYtdlp() { return state.mode !== 'douyin'; }
 
 function withToken(url) {
   if (!TOKEN) return url;
@@ -625,38 +639,60 @@ $('btnPwdLogin').onclick = async () => {
   finally { $('btnPwdLogin').disabled = false; }
 };
 
+function buildProfileUrl(mode, raw) {
+  const v = String(raw || '').trim();
+  if (!v) return '';
+  if (mode === 'url' || mode === 'douyin') return v;
+  if (/^https?:\/\//i.test(v)) return v;
+  const name = v.replace(/^@/, '').replace(/\s+/g, '');
+  if (mode === 'youtube') return 'https://www.youtube.com/@' + name;
+  if (mode === 'tiktok') return 'https://www.tiktok.com/@' + name;
+  if (mode === 'x') return 'https://x.com/' + name;
+  if (mode === 'xiaohongshu') return '';
+  return v;
+}
+const MODE_HINTS = {
+  douyin: ['输入抖音号，例如 36200424545', '主页批量，需先登录抖音'],
+  youtube: ['输入 @账号 或频道链接，例如 @MrBeast', '频道全部作品，需要能访问 YouTube'],
+  tiktok: ['输入 @账号 或主页链接，例如 @tiktok', '主页批量通常需要登录 TikTok（用浏览器 cookies）'],
+  xiaohongshu: ['粘贴主页链接，例如 https://www.xiaohongshu.com/user/profile/xxxx', '小红书只认主页链接；主页批量需先在工具里登录小红书'],
+  x: ['输入 @账号 或主页链接，例如 @X', 'X 主页批量受平台限制，通常需要登录，失败时请用单条推文链接'],
+  url: ['粘贴作品或主页链接，例如 https://www.youtube.com/watch?v=xxx', '支持 yt-dlp 的站点；主页链接会列出条目'],
+};
 $('platform').onchange = () => {
   state.mode = $('platform').value;
   applyModeToPlan();
-  if (state.mode === 'url') {
-    $('douyinId').placeholder = '粘贴作品或主页链接，例如 https://www.youtube.com/@频道';
-    $('platformHint').textContent = '支持 yt-dlp 的站点；主页链接会列出条目';
-  } else {
-    $('douyinId').placeholder = '输入抖音号，例如 36200424545';
-    $('platformHint').textContent = '主页批量，需先登录抖音';
-  }
+  const h = MODE_HINTS[state.mode] || MODE_HINTS.douyin;
+  $('douyinId').placeholder = h[0];
+  $('platformHint').textContent = h[1];
 };
 
 $('btnFetch').onclick = async () => {
   const input = $('douyinId').value.trim();
   if (!input) {
-    $('msg').textContent = state.mode === 'url' ? '先粘贴链接' : '先输入抖音号';
+    $('msg').textContent = usesYtdlp() ? '先输入账号或粘贴链接' : '先输入抖音号';
+    return;
+  }
+  const mode = state.mode;
+  const targetUrl = mode === 'douyin' ? input : buildProfileUrl(mode, input);
+  if (!targetUrl) {
+    $('msg').innerHTML = '<span class="err">小红书只认主页链接，例如 https://www.xiaohongshu.com/user/profile/xxxx</span>';
     return;
   }
   $('btnFetch').disabled = true;
-  $('msg').textContent = state.mode === 'url'
-    ? '正在解析链接（首次可能需要 10~60 秒）…'
-    : '正在搜索博主并抓取作品列表，首次可能需要 30~60 秒…';
+  $('msg').textContent = mode === 'douyin'
+    ? '正在搜索博主并抓取作品列表，首次可能需要 30~60 秒…'
+    : '正在解析 ' + targetUrl + '（首次可能需要 10~60 秒）…';
   try {
-    if (state.mode === 'url') {
-      const data = await api('/api/url/resolve', { method: 'POST', body: JSON.stringify({ url: input }) });
+    if (mode !== 'douyin') {
+      const data = await api('/api/url/resolve', { method: 'POST', body: JSON.stringify({ url: targetUrl, platform: mode }) });
       state.user = {
         nickname: data.title || '通用下载',
-        douyin_id: input,
+        douyin_id: targetUrl,
         follower_count: 0,
         total_favorited: 0,
         aweme_count: data.entries.length,
-        signature: '来源：' + input,
+        signature: '来源：' + targetUrl,
       };
       state.videos = data.entries.map(e => ({
         aweme_id: e.id,
@@ -678,12 +714,13 @@ $('btnFetch').onclick = async () => {
       state.videos = data.videos;
     }
     state.selected = new Set(state.videos.map(v => v.aweme_id));
+    state.page = 1;
     renderUser();
     renderList();
     $('userPanel').style.display = '';
     $('listPanel').style.display = '';
     $('dlPanel').style.display = '';
-    $('msg').innerHTML = `<span class="ok">已获取 ${state.videos.length} 条</span>`;
+    $('msg').innerHTML = `<span class="ok">已获取 ${state.videos.length} 条</span>` + (data.truncated ? '（超过 2000 条只列前 2000 条）' : '');
     refreshStatus();
   } catch (e) {
     $('msg').innerHTML = '<span class="err">' + e.message + '</span>';
@@ -703,10 +740,19 @@ function renderUser() {
   $('signature').textContent = u.signature || '';
 }
 
+function pageCount() {
+  return Math.max(1, Math.ceil(state.videos.length / state.pageSize));
+}
+function currentPageItems() {
+  const start = (state.page - 1) * state.pageSize;
+  return state.videos.slice(start, start + state.pageSize).map((v, i) => ({ v, idx: start + i }));
+}
 function renderList() {
   const tb = $('tbody');
   tb.innerHTML = '';
-  state.videos.forEach((v, idx) => {
+  const pages = pageCount();
+  if (state.page > pages) state.page = pages;
+  currentPageItems().forEach(({ v, idx }) => {
     let type = '视频';
     let typeCls = 'video';
     if (v.is_image) {
@@ -747,8 +793,20 @@ function renderList() {
       updateSelInfo();
     };
   });
+  const start = state.videos.length ? (state.page - 1) * state.pageSize + 1 : 0;
+  const end = Math.min(state.videos.length, state.page * state.pageSize);
+  $('pageInfo').textContent = state.videos.length ? `第 ${start}-${end} 条 / 共 ${state.videos.length} 条 · ${state.page}/${pages} 页` : '-';
+  $('btnPrevPage').disabled = state.page <= 1;
+  $('btnNextPage').disabled = state.page >= pages;
   updateSelInfo();
 }
+$('btnPrevPage').onclick = () => { if (state.page > 1) { state.page -= 1; renderList(); } };
+$('btnNextPage').onclick = () => { if (state.page < pageCount()) { state.page += 1; renderList(); } };
+$('pageSize').onchange = () => {
+  state.pageSize = Number($('pageSize').value) || 100;
+  state.page = 1;
+  renderList();
+};
 
 function updateSelInfo() {
   $('selInfo').textContent = `已选 ${state.selected.size} / ${state.videos.length}`;
@@ -799,7 +857,7 @@ async function startExport(ids) {
     for (let b = 0; b < batches.length; b++) {
       const where = target === 'quark' ? '，完成后上传夸克网盘 ' + quarkPath : (target === 'phone' ? '，完成后拉回手机' : '');
       $('msg').textContent = `正在处理第 ${b + 1}/${batches.length} 批（${batches[b].length} 条）${where}…`;
-      if (state.mode === 'url') {
+      if (usesYtdlp()) {
         const urls = state.videos.filter(v => batches[b].includes(v.aweme_id)).map(v => v.source_url);
         await api('/api/url/download', { method: 'POST', body: JSON.stringify({ urls, title: (state.user && state.user.nickname) || '通用下载', quality: $('quality').value, target, quarkPath, pack, types }) });
       } else {
@@ -823,11 +881,13 @@ async function startExport(ids) {
     if (dirHandle && produced.length) {
       const wrote = await writeToDirHandle(produced);
       $('msg').innerHTML = `<span class="ok">已写入本机文件夹「${dirHandle.name}」共 ${wrote} 个文件</span>`;
+      await cleanupServerCopy();
     } else if (target === 'phone') {
       if (!produced.length) $('msg').innerHTML = '<span class="err">这一批没有产出文件，手机无东西可拉</span>';
       else {
         $('msg').innerHTML = `<span class="ok">下载完成 ${produced.length} 个文件，开始存到手机…</span>`;
         await saveToPhone(produced);
+        await cleanupServerCopy();
       }
     } else if (target === 'quark') {
       $('msg').innerHTML = '<span class="ok">下载 + 上传全部结束，明细见上传进度卡</span>';
@@ -1056,9 +1116,12 @@ $('btnCopyLan').onclick = async () => {
 };
 
 async function loadFiles() {
+  // 远程访问时不展示服务器上的文件（服务器不保留导出产物）
+  if (state.config && state.config.isLocal === false) { $('filesPanel').style.display = 'none'; return; }
   try {
     const r = await api('/api/files');
     $('filesPanel').style.display = '';
+    $('filesPanel').dataset.shown = '1';
     $('filesDir').textContent = r.dir;
     state.files = r.files.map(f => f.name);
     [...state.fileSelected].forEach(n => { if (state.files.indexOf(n) < 0) state.fileSelected.delete(n); });
@@ -1128,6 +1191,14 @@ async function uploadNamesToQuark(names) {
   } catch (e) {
     alert(e.message);
   }
+}
+
+async function cleanupServerCopy() {
+  if (!(state.config && state.config.isLocal === false)) return;
+  try {
+    const r = await api('/api/cleanup', { method: 'POST', body: '{}' });
+    if (r.removed) $('msg').textContent += `（服务器已自动清理 ${r.removed} 个临时文件）`;
+  } catch (e) { /* 服务器还有 30 分钟兜底清理 */ }
 }
 
 // 手机：让浏览器/WebView 逐个把文件拉下来；装了 App 时会直接落进相册
@@ -1389,7 +1460,7 @@ function currentTarget() { return state.target || 'local'; }
 function typeLabels() {
   const t = state.types;
   const on = [];
-  if (state.mode === 'url') {
+  if (usesYtdlp()) {
     if (t.video) on.push('视频');
     if (t.audio) on.push('音频');
   } else {
@@ -1401,6 +1472,8 @@ function typeLabels() {
 }
 const IS_MOBILE = /Android|iPhone|iPad|iPod|Mobile|wv[);]|; wv/i.test(navigator.userAgent);
 function allowedTargets() {
+  const remote = state.config && state.config.isLocal === false;
+  if (remote) return ['phone', 'quark'];
   return IS_MOBILE ? ['phone', 'quark'] : ['local', 'phone', 'quark'];
 }
 function targetLabel(k) {
@@ -1410,7 +1483,7 @@ function targetLabel(k) {
   return '夸克网盘';
 }
 function applyModeToPlan() {
-  const urlMode = state.mode === 'url';
+  const urlMode = usesYtdlp();
   $('tyImage').style.display = urlMode ? 'none' : '';
   $('tyLive').style.display = urlMode ? 'none' : '';
   $('tyAudio').style.display = urlMode ? '' : 'none';
@@ -1436,8 +1509,14 @@ function setTarget(t) {
     b.textContent = targetLabel(b.dataset.t);
   });
   $('planDirLabel').textContent = local ? '电脑目录' : '服务器目录';
+  $('saveRow').style.display = local ? '' : 'none';
+  if (!local) $('dirPick').style.display = 'none';
+  $('filesPanel').style.display = local ? ($('filesPanel').dataset.shown === '1' ? '' : 'none') : 'none';
+  const storeHint = local ? '' : '服务器不存你的东西：导出完成后会自动清理服务器上的临时文件，只保留你本机文件夹（或你选的网盘）里的那份。';
+  $('serverStoreHint').textContent = storeHint;
+  $('serverStoreHint').style.display = storeHint ? '' : 'none';
   $('saveDirLabel').textContent = local ? '保存目录' : '服务器保存目录';
-  const dHint = local ? '' : '这行是服务器上的路径（不是你电脑）。要存到你自己的电脑：点下面「选本机文件夹，直接写入…」，或在导出方案里选「下载到本机」/勾「合成一个压缩包」。';
+  const dHint = local ? '' : '';
   $('saveDirHint').textContent = dHint;
   $('saveDirHint').style.display = dHint ? '' : 'none';
   setFsaUI();
@@ -1573,11 +1652,15 @@ function updatePlan() {
 [...$('targetSeg').children].forEach((b) => { b.onclick = () => setTarget(b.dataset.t); });
 $('btnStart').onclick = () => startExport([...state.selected]);
 
-loadConfig();
-loadFiles();
+// 先拿到 config（判断本机/远程）再渲染，否则远程页面会闪一下"服务器目录"
+loadConfig().then(() => {
+  setTarget(state.target || 'local');
+  applyModeToPlan();
+  loadFiles();
+}).catch(() => {
+  loadFiles();
+});
 loadQuarkStatus();
-setTarget('local');
-applyModeToPlan();
 
 refreshLogin();
 setInterval(refreshLogin, 2000);

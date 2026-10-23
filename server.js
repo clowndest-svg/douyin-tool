@@ -649,15 +649,18 @@ async function fetchVideos(secUid) {
 
   let guard = 0;
   let stagnant = 0;
-  while (hasMore && guard < 80) {
+  while (hasMore && guard < 150) {
     const before = collected.length;
-    await page.evaluate(() => window.scrollBy(0, Math.max(600, window.innerHeight * 0.8))).catch(() => {});
-    await page.waitForTimeout(1500);
+    await page.evaluate(() => window.scrollBy(0, Math.max(600, Math.round(window.innerHeight * 0.9)))).catch(() => {});
+    await page.waitForTimeout(1800);
     if (collected.length === before) stagnant += 1; else stagnant = 0;
-    if (stagnant >= 6) break;
+    if (stagnant >= 10) break;
     guard += 1;
   }
   page.off('response', onResponse);
+  if (hasMore && collected.length) {
+    pushLog(`注意：抖音仍标记「还有更多」，但连续 10 次滚动没拿到新数据，列表可能不完整（已抓 ${collected.length} 条）`);
+  }
 
   const map = new Map();
   for (const v of collected) {
@@ -908,6 +911,7 @@ async function runDownload(items, opts) {
     try {
       const z = await packFiles(downloadState.produced, sanitize(user.nickname, 30) + '_打包_' + Date.now());
       downloadState.zip = z.name;
+      downloadState.packSources = downloadState.produced.slice();
       downloadState.produced = [z.name];
       pushLog(`已打包成压缩包：${z.name}（${(z.size / 1048576).toFixed(1)} MB，${z.packed} 个文件）`);
     } catch (e) {
@@ -927,6 +931,17 @@ async function runDownload(items, opts) {
       } catch (e) {
         downloadState.quarkError = e.message;
       }
+    }
+  }
+  if (opts && opts.remote) {
+    downloadState.remote = true;
+    if (target === 'quark') {
+      const rm = cleanupProduced(allProducedNames());
+      if (rm.length) pushLog(`服务器不留存：已删除本地临时文件 ${rm.length} 个`);
+      downloadState.produced = [];
+      downloadState.packSources = [];
+    } else {
+      scheduleRemoteCleanup('超时未拉取');
     }
   }
   downloadState.running = false;
@@ -1068,6 +1083,7 @@ async function runYtdlpDownload(urls, title, quality, opts) {
     try {
       const z = await packFiles(downloadState.produced, sanitize(title, 30) + '_打包_' + Date.now());
       downloadState.zip = z.name;
+      downloadState.packSources = downloadState.produced.slice();
       downloadState.produced = [z.name];
       pushLog(`已打包成压缩包：${z.name}（${(z.size / 1048576).toFixed(1)} MB，${z.packed} 个文件）`);
     } catch (e) {
@@ -1087,6 +1103,17 @@ async function runYtdlpDownload(urls, title, quality, opts) {
       } catch (e) {
         downloadState.quarkError = e.message;
       }
+    }
+  }
+  if (opts && opts.remote) {
+    downloadState.remote = true;
+    if (target === 'quark') {
+      const rm = cleanupProduced(allProducedNames());
+      if (rm.length) pushLog(`服务器不留存：已删除本地临时文件 ${rm.length} 个`);
+      downloadState.produced = [];
+      downloadState.packSources = [];
+    } else {
+      scheduleRemoteCleanup('超时未拉取');
     }
   }
   downloadState.running = false;
@@ -1622,16 +1649,17 @@ app.post('/api/download', async (req, res) => {
       return res.status(429).json({ error: `今日安全额度剩余 ${Math.max(0, left)} 条，本次 ${items.length} 条超限，请明天再下或调高每日上限` });
     }
   }
-  runDownload(items, { target, quarkPath: body.quarkPath, types: body.types, pack: !!body.pack }).catch(e => pushLog('下载任务异常：' + e.message));
+  runDownload(items, { target, quarkPath: body.quarkPath, types: body.types, pack: !!body.pack, remote: !isLocalReq(req) }).catch(e => pushLog('下载任务异常：' + e.message));
   res.json({ started: true, count: items.length, target });
 });
 
 app.post('/api/url/resolve', async (req, res) => {
   const url = String((req.body && req.body.url) || '').trim();
+  const platform = String((req.body && req.body.platform) || '').trim();
   if (!/^https?:\/\//i.test(url)) return res.status(400).json({ error: '请输入 http(s) 链接' });
   try {
     if (appConfig.useCookies !== false) await exportCookies();
-    const out = await runYtdlp([...ytdlpBaseArgs(), '-J', '--flat-playlist', '--no-warnings', url], 180000);
+    const out = await runYtdlp([...ytdlpBaseArgs(), '-J', '--flat-playlist', '--playlist-end', '2000', '--no-warnings', url], 300000);
     const info = JSON.parse(out);
     const entries = [];
     if (Array.isArray(info.entries) && info.entries.length) {
@@ -1654,9 +1682,14 @@ app.post('/api/url/resolve', async (req, res) => {
         thumbnail: info.thumbnail || '',
       });
     }
-    res.json({ title: info.title || '', entries });
+    res.json({ title: info.title || '', entries, truncated: entries.length >= 2000 });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    const hint = platform === 'x' ? ' | X 主页批量需要登录且平台限制多，建议改用单条推文链接'
+      : platform === 'xiaohongshu' ? ' | 小红书主页批量需要先在工具里登录小红书，且平台风控严，可先试单条笔记链接'
+      : platform === 'tiktok' ? ' | TikTok 主页批量通常需要登录：先在工具里打开 TikTok 登录，并保持「使用浏览器 cookies」开启'
+      : platform === 'youtube' ? ' | YouTube 频道请确认 @账号 正确；网络受限时也会拉不到列表'
+      : '';
+    res.status(500).json({ error: e.message + hint });
   }
 });
 
@@ -1683,8 +1716,18 @@ app.post('/api/url/download', async (req, res) => {
       return res.status(429).json({ error: `今日安全额度剩余 ${Math.max(0, left)} 条，本次 ${urls.length} 条超限` });
     }
   }
-  runYtdlpDownload(urls, title, quality, { target, quarkPath: body.quarkPath, types: body.types, pack: !!body.pack }).catch(e => pushLog('下载任务异常：' + e.message));
+  runYtdlpDownload(urls, title, quality, { target, quarkPath: body.quarkPath, types: body.types, pack: !!body.pack, remote: !isLocalReq(req) }).catch(e => pushLog('下载任务异常：' + e.message));
   res.json({ started: true, count: urls.length, target });
+});
+
+app.post('/api/cleanup', (req, res) => {
+  const body = req.body || {};
+  const names = Array.isArray(body.names) && body.names.length ? body.names.map(String) : allProducedNames();
+  const removed = cleanupProduced(names);
+  if (remoteCleanTimer) { clearTimeout(remoteCleanTimer); remoteCleanTimer = null; }
+  downloadState.produced = [];
+  if (removed.length) pushLog(`服务器不留存：已清理 ${removed.length} 个临时文件`);
+  res.json({ ok: true, removed: removed.length });
 });
 
 app.post('/api/download/stop', (req, res) => {
@@ -1857,6 +1900,41 @@ app.post('/api/quark/upload', (req, res) => {
 app.get('/api/quark/task', (req, res) => {
   res.json(quarkState);
 });
+
+// 服务器不留存：远程客户端导出完就把产物删掉
+function allProducedNames() {
+  return [...(downloadState.produced || []), ...(downloadState.packSources || [])];
+}
+
+function cleanupProduced(names) {
+  const removed = [];
+  for (const n of names || []) {
+    try {
+      const abs = resolveUnderRoot(n);
+      if (fs.existsSync(abs)) {
+        fs.unlinkSync(abs);
+        removed.push(n);
+      }
+      const dir = path.dirname(abs);
+      try { if (fs.readdirSync(dir).length === 0) fs.rmdirSync(dir); } catch (e) { /* 非空或已删 */ }
+    } catch (e) { /* 忽略单个文件 */ }
+  }
+  return removed;
+}
+
+let remoteCleanTimer = null;
+function scheduleRemoteCleanup(reason) {
+  if (remoteCleanTimer) return;
+  remoteCleanTimer = setTimeout(() => {
+    const rm = cleanupProduced(allProducedNames());
+    remoteCleanTimer = null;
+    if (rm.length) {
+      console.log(`[${new Date().toLocaleTimeString('zh-CN', { hour12: false })}] 服务器不留存（${reason}）：已清理 ${rm.length} 个临时文件`);
+      downloadState.produced = [];
+    }
+  }, 30 * 60000);
+  if (remoteCleanTimer.unref) remoteCleanTimer.unref();
+}
 
 async function packFiles(names, zipName) {
   const entries = [];
