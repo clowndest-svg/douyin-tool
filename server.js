@@ -754,6 +754,7 @@ function guessImageExt(url) {
 const SUB_IMAGE = '图片';
 const SUB_LIVE = '动态图';
 const SUB_VIDEO = '视频';
+const SUB_AUDIO = '音频';
 
 function subDirs(dir) {
   return [dir, path.join(dir, SUB_IMAGE), path.join(dir, SUB_LIVE), path.join(dir, SUB_VIDEO)];
@@ -979,17 +980,20 @@ function parseYtdlpPaths(out) {
 
 async function runYtdlpDownload(urls, title, quality, opts) {
   const target = (opts && opts.target) || 'local';
+  const types = { video: true, audio: true, ...((opts && opts.types) || {}) };
   const safe = getSafeMode();
-  downloadState = { running: true, total: urls.length, done: 0, failed: 0, skipped: 0, current: '', log: [], safeMode: safe, target, produced: [], quarkError: '', stopping: false };
+  downloadState = { running: true, total: urls.length, done: 0, failed: 0, skipped: 0, current: '', log: [], safeMode: safe, target, types, pack: !!(opts && opts.pack), produced: [], zip: '', packError: '', quarkError: '', stopping: false };
   stopRequested = false;
   if (appConfig.useCookies !== false) await exportCookies();
   const platform = platformFromUrl(urls[0]);
-  const dir = path.join(getDownloadRoot(), platform, sanitize(title, 60));
+  const baseDir = path.join(getDownloadRoot(), platform, sanitize(title, 60));
+  const audioOnly = quality === 'audio' || (types.audio && !types.video);
+  const dir = path.join(baseDir, audioOnly ? SUB_AUDIO : SUB_VIDEO);
   fs.mkdirSync(dir, { recursive: true });
-  pushLog(`开始下载 ${urls.length} 条到 ${dir}（${safe ? '安全模式' : '普通模式'}，清晰度 ${quality || 'best'}）`);
+  pushLog(`开始下载 ${urls.length} 条到 ${dir}（${safe ? '安全模式' : '普通模式'}，清晰度 ${quality || 'best'}，去向 ${target}）`);
 
   const hasFfmpeg = fs.existsSync(FFMPEG);
-  const format = formatForQuality(quality, hasFfmpeg);
+  const format = audioOnly ? formatForQuality('audio', hasFfmpeg) : formatForQuality(quality, hasFfmpeg);
 
   for (const url of urls) {
     if (stopRequested) {
@@ -1073,6 +1077,7 @@ app.get('/api/config', (req, res) => {
     quark: quarkInfo(),
     picker: (HAS_PS && isLocalReq(req)) ? 'native' : 'page',
     serverOs: process.platform,
+    httpsPort: TLS_READY ? HTTPS_PORT : 0,
   });
 });
 
@@ -1647,7 +1652,7 @@ app.post('/api/url/download', async (req, res) => {
       return res.status(429).json({ error: `今日安全额度剩余 ${Math.max(0, left)} 条，本次 ${urls.length} 条超限` });
     }
   }
-  runYtdlpDownload(urls, title, quality, { target, quarkPath: body.quarkPath }).catch(e => pushLog('下载任务异常：' + e.message));
+  runYtdlpDownload(urls, title, quality, { target, quarkPath: body.quarkPath, types: body.types, pack: !!body.pack }).catch(e => pushLog('下载任务异常：' + e.message));
   res.json({ started: true, count: urls.length, target });
 });
 
@@ -1854,6 +1859,22 @@ app.post('/api/pack', async (req, res) => {
     res.status(400).json({ error: '打包失败：' + e.message });
   }
 });
+
+// HTTPS：只有安全上下文（https 或 localhost）浏览器才允许「选择本机文件夹，直接写入」
+const TLS_KEY = path.join(ROOT, 'certs', 'server.key');
+const TLS_CRT = path.join(ROOT, 'certs', 'server.crt');
+const HTTPS_PORT = Number(process.env.HTTPS_PORT) || 3211;
+const TLS_READY = fs.existsSync(TLS_KEY) && fs.existsSync(TLS_CRT);
+if (TLS_READY) {
+  try {
+    https.createServer({ key: fs.readFileSync(TLS_KEY), cert: fs.readFileSync(TLS_CRT) }, app)
+      .listen(HTTPS_PORT, HOST, () => console.log(`HTTPS: https://<本机IP>:${HTTPS_PORT}/?token=${TOKEN}`));
+  } catch (e) {
+    console.log('HTTPS 启动失败：' + e.message);
+  }
+} else {
+  console.log('提示：把 certs/server.key 与 certs/server.crt 放好后重启，即可用 HTTPS 打开（解锁"选本机文件夹直接写入"）');
+}
 
 app.listen(PORT, HOST, () => {
   const lan = lanAddresses();

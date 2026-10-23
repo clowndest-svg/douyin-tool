@@ -9,6 +9,7 @@ ExecStart=/opt/node/bin/node server.js
 Environment=NODE_ENV=production
 Environment=HEADLESS=1
 Environment=PORT=3210
+Environment=HTTPS_PORT=3211
 Environment=BROWSER_IDLE_MIN=5
 Restart=always
 RestartSec=3

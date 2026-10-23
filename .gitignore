@@ -21,3 +21,5 @@ android/build/
 android/.gradle/
 android/local.properties
 login-qr.png
+
+certs/

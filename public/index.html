@@ -267,6 +267,7 @@
         <span class="pill on" id="tyImage" data-ty="image">图片</span>
         <span class="pill on" id="tyLive" data-ty="live">动态图</span>
         <span class="pill on" id="tyVideo" data-ty="video">视频</span>
+        <span class="pill" id="tyAudio" data-ty="audio">音频</span>
         <span class="pill" id="packPill">合成一个压缩包</span>
       </div>
       <div class="plan-row">
@@ -301,6 +302,7 @@
         <button class="ghost" id="btnPlanQuark">去连接 / 选目录</button>
       </div>
       <div class="plan-row"><span class="hint" id="planSummary">-</span></div>
+      <div class="plan-row"><span class="hint" id="planTechHint"></span></div>
     </div>
     <div class="list">
       <table>
@@ -426,7 +428,7 @@ const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
 if (params.get('token')) localStorage.setItem('dy_token', params.get('token'));
 const TOKEN = localStorage.getItem('dy_token') || '';
-let state = { user: null, videos: [], selected: new Set(), loggedIn: false, config: null, mode: 'douyin', target: 'local', files: [], fileSelected: new Set(), quark: null, types: { image: true, live: true, video: true }, pack: false };
+let state = { user: null, videos: [], selected: new Set(), loggedIn: false, config: null, mode: 'douyin', target: 'local', files: [], fileSelected: new Set(), quark: null, types: { image: true, live: true, video: true, audio: false }, pack: false };
 
 function withToken(url) {
   if (!TOKEN) return url;
@@ -619,6 +621,7 @@ $('btnPwdLogin').onclick = async () => {
 
 $('platform').onchange = () => {
   state.mode = $('platform').value;
+  applyModeToPlan();
   if (state.mode === 'url') {
     $('douyinId').placeholder = '粘贴作品或主页链接，例如 https://www.youtube.com/@频道';
     $('platformHint').textContent = '支持 yt-dlp 的站点；主页链接会列出条目';
@@ -764,7 +767,7 @@ async function waitDownloadDone() {
 async function startExport(ids) {
   if (!ids || !ids.length) { alert('请先在列表里勾选作品'); return; }
   const target = currentTarget();
-  const types = { image: state.types.image, live: state.types.live, video: state.types.video };
+  const types = { image: state.types.image, live: state.types.live, video: state.types.video, audio: state.types.audio };
   const pack = state.pack;
   const quarkPath = ($('planQuarkPath').value || '').trim();
   if (target === 'quark' && !quarkReady()) {
@@ -792,7 +795,7 @@ async function startExport(ids) {
       $('msg').textContent = `正在处理第 ${b + 1}/${batches.length} 批（${batches[b].length} 条）${where}…`;
       if (state.mode === 'url') {
         const urls = state.videos.filter(v => batches[b].includes(v.aweme_id)).map(v => v.source_url);
-        await api('/api/url/download', { method: 'POST', body: JSON.stringify({ urls, title: (state.user && state.user.nickname) || '通用下载', quality: $('quality').value, target, quarkPath, pack }) });
+        await api('/api/url/download', { method: 'POST', body: JSON.stringify({ urls, title: (state.user && state.user.nickname) || '通用下载', quality: $('quality').value, target, quarkPath, pack, types }) });
       } else {
         await api('/api/download', { method: 'POST', body: JSON.stringify({ awemeIds: batches[b], target, quarkPath, types, pack }) });
       }
@@ -1380,10 +1383,41 @@ function currentTarget() { return state.target || 'local'; }
 function typeLabels() {
   const t = state.types;
   const on = [];
-  if (t.image) on.push('图片');
-  if (t.live) on.push('动态图');
-  if (t.video) on.push('视频');
+  if (state.mode === 'url') {
+    if (t.video) on.push('视频');
+    if (t.audio) on.push('音频');
+  } else {
+    if (t.image) on.push('图片');
+    if (t.live) on.push('动态图');
+    if (t.video) on.push('视频');
+  }
   return on;
+}
+const IS_MOBILE = /Android|iPhone|iPad|iPod|Mobile|wv[);]|; wv/i.test(navigator.userAgent);
+function allowedTargets() {
+  return IS_MOBILE ? ['phone', 'quark'] : ['local', 'phone', 'quark'];
+}
+function targetLabel(k) {
+  const local = !(state.config && state.config.isLocal === false);
+  if (k === 'local') return local ? '电脑' : '服务器目录';
+  if (k === 'phone') return IS_MOBILE ? '下载到相册' : '下载到本机';
+  return '夸克网盘';
+}
+function applyModeToPlan() {
+  const urlMode = state.mode === 'url';
+  $('tyImage').style.display = urlMode ? 'none' : '';
+  $('tyLive').style.display = urlMode ? 'none' : '';
+  $('tyAudio').style.display = urlMode ? '' : 'none';
+  if (urlMode) { state.types.image = true; state.types.live = true; }
+  if (!urlMode) state.types.audio = false;
+  $('tyAudio').classList.toggle('on', !!state.types.audio);
+  const allow = allowedTargets();
+  [...$('targetSeg').children].forEach((b) => {
+    b.style.display = allow.indexOf(b.dataset.t) >= 0 ? '' : 'none';
+    b.textContent = targetLabel(b.dataset.t);
+  });
+  if (allow.indexOf(state.target) < 0) setTarget(allow[0]);
+  updatePlan();
 }
 function quarkReady() {
   return !!(state.quark && state.quark.loggedIn && ($('planQuarkPath').value || '').trim());
@@ -1391,26 +1425,24 @@ function quarkReady() {
 function setTarget(t) {
   state.target = t;
   const local = !(state.config && state.config.isLocal === false);
-  const labels = local
-    ? { local: '电脑', phone: '手机相册', quark: '夸克网盘' }
-    : { local: '服务器目录', phone: '下载到本机', quark: '夸克网盘' };
   [...$('targetSeg').children].forEach((b) => {
     b.classList.toggle('on', b.dataset.t === t);
-    b.textContent = labels[b.dataset.t];
+    b.textContent = targetLabel(b.dataset.t);
   });
   $('planDirLabel').textContent = local ? '电脑目录' : '服务器目录';
   $('planLocalRow').style.display = t === 'local' ? '' : 'none';
   $('fsaRow').style.display = (t === 'local' && window.showDirectoryPicker) ? '' : 'none';
   $('planPhoneRow').style.display = t === 'phone' ? '' : 'none';
   $('planQuarkRow').style.display = t === 'quark' ? '' : 'none';
+  const phoneLabel = IS_MOBILE ? '下载到相册' : '下载到本机';
   $('subLine').textContent = t === 'phone'
-    ? '勾选作品 → 选类型 → 点开始导出：服务器抓取打包后，由本机浏览器拉回你这台电脑'
+    ? (IS_MOBILE ? '勾选作品 → 选类型 → 点开始导出：服务器抓取打包后，手机把文件拉进相册' : '勾选作品 → 选类型 → 点开始导出：服务器抓取打包后，由本机浏览器拉回你这台电脑')
     : (t === 'quark' ? '勾选作品 → 选类型 → 点开始导出：下完自动打包并上传到夸克网盘指定目录'
       : (local ? '勾选作品 → 选类型 → 点开始导出：按 图片 / 动态图 / 视频 三个子文件夹保存'
-        : '勾选作品 → 选类型 → 点开始导出：注意「服务器目录」是远程那台机器的盘，要落到你自己电脑请选「下载到本机」'));
+        : '勾选作品 → 选类型 → 点开始导出：「服务器目录」是远程那台机器的盘，要落到你自己电脑请选「' + phoneLabel + '」'));
   updatePlan();
 }
-['image', 'live', 'video'].forEach((k) => {
+['image', 'live', 'video', 'audio'].forEach((k) => {
   const el = $('ty' + k[0].toUpperCase() + k.slice(1));
   el.onclick = () => {
     const on = !state.types[k];
@@ -1500,6 +1532,16 @@ function updatePlan() {
     $('planQuarkState').innerHTML = ok ? '<span class="hint ok">● 已连接，目录已选</span>'
       : (state.quark && state.quark.loggedIn ? '<span class="hint warn">● 已连接，但没填目录</span>' : '<span class="hint err">● 未连接：点右侧按钮扫码</span>');
   }
+  const c = state.config || {};
+  let th = '';
+  if (!c.isLocal) {
+    if (window.showDirectoryPicker) th = '当前是安全上下文，可用「选本机文件夹，直接写入」把文件落到你选的文件夹。';
+    else if (c.httpsPort) th = `想直接写进本机文件夹：改用 https://${location.hostname}:${c.httpsPort}/?token=${TOKEN} 打开（自签证书需在浏览器点一次「继续访问」），HTTPS 下才会出现「选本机文件夹」入口。`;
+    else th = '想直接写进本机文件夹需要 HTTPS（服务器放好 certs 重启即可）。现在最省事的做法：勾「合成一个压缩包」，浏览器只下载一个 zip，并在浏览器设置里开启「下载前询问每个文件的保存位置」来挑目录。';
+  }
+  if (IS_MOBILE && !c.isLocal) th = '手机访问：选「下载到相册」即可把文件拉进手机相册（用 App 打开会直接写进相册）。' + th;
+  $('planTechHint').textContent = th;
+  $('planTechHint').style.display = th ? '' : 'none';
 }
 [...$('targetSeg').children].forEach((b) => { b.onclick = () => setTarget(b.dataset.t); });
 $('btnStart').onclick = () => startExport([...state.selected]);
@@ -1508,6 +1550,7 @@ loadConfig();
 loadFiles();
 loadQuarkStatus();
 setTarget('local');
+applyModeToPlan();
 
 refreshLogin();
 setInterval(refreshLogin, 2000);
