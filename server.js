@@ -1689,7 +1689,10 @@ app.post('/api/url/resolve', async (req, res) => {
       : platform === 'tiktok' ? ' | TikTok 主页批量通常需要登录：先在工具里打开 TikTok 登录，并保持「使用浏览器 cookies」开启'
       : platform === 'youtube' ? ' | YouTube 频道请确认 @账号 正确；网络受限时也会拉不到列表'
       : '';
-    res.status(500).json({ error: e.message + hint });
+    const netHint = /timed out|timeout|Failed to resolve|Unable to download|Tunnel|Connection reset|ENOTFOUND|ECONNREFUSED/i.test(e.message)
+      ? ' | 这台机器连不上该平台（境外站点在国内云服务器上通常不可达），请用本机版（双击启动工具）操作'
+      : '';
+    res.status(500).json({ error: e.message + hint + netHint });
   }
 });
 
